@@ -36,15 +36,22 @@ namespace DripSharp.Runtime;
 
 internal static class JavaStandardCharsets
 {
-    internal static readonly Encoding UTF8 = new UTF8Encoding(false);
+    private static Encoding WithJavaDecoderReplacement(Encoding encoding)
+    {
+        var result = (Encoding)encoding.Clone();
+        result.DecoderFallback = new DecoderReplacementFallback("\ufffd");
+        return result;
+    }
+
+    internal static readonly Encoding UTF8 = WithJavaDecoderReplacement(new UTF8Encoding(false));
     // Java UTF-16 consumes an optional BOM and defaults to big-endian.
     // Keep a distinct instance so JavaCompat can retain that contract while
     // UTF-16BE remains a BOM-agnostic fixed-endian charset.
-    internal static readonly Encoding UTF16 = new UnicodeEncoding(true, true);
-    internal static readonly Encoding UTF16BE = Encoding.BigEndianUnicode;
-    internal static readonly Encoding UTF16LE = Encoding.Unicode;
-    internal static readonly Encoding USASCII = Encoding.ASCII;
-    internal static readonly Encoding ISO88591 = Encoding.GetEncoding(28591);
+    internal static readonly Encoding UTF16 = WithJavaDecoderReplacement(new UnicodeEncoding(true, true));
+    internal static readonly Encoding UTF16BE = WithJavaDecoderReplacement(Encoding.BigEndianUnicode);
+    internal static readonly Encoding UTF16LE = WithJavaDecoderReplacement(Encoding.Unicode);
+    internal static readonly Encoding USASCII = WithJavaDecoderReplacement(Encoding.ASCII);
+    internal static readonly Encoding ISO88591 = WithJavaDecoderReplacement(Encoding.GetEncoding(28591));
 }
 
 // java.nio.file.NoSuchFileException carries the missing path as its message.
@@ -490,7 +497,8 @@ public
 #endif
 enum JavaCodingErrorAction
 {
-    Report
+    Report,
+    Replace
 }
 
 #if DRIPSHARP_INTERNAL_JAVA_COMPAT
@@ -501,27 +509,67 @@ public
 sealed class JavaCharsetDecoder
 {
     private readonly Encoding encoding;
+    private readonly bool javaUtf16;
 
     public JavaCharsetDecoder(Encoding encoding)
     {
         ArgumentNullException.ThrowIfNull(encoding);
+        javaUtf16 = ReferenceEquals(encoding, JavaStandardCharsets.UTF16);
         this.encoding = (Encoding)encoding.Clone();
         this.encoding.DecoderFallback = DecoderFallback.ExceptionFallback;
     }
 
     public JavaCharsetDecoder ReportErrors(JavaCodingErrorAction action)
     {
-        if (action != JavaCodingErrorAction.Report)
-            throw new ArgumentOutOfRangeException(nameof(action));
-        encoding.DecoderFallback = DecoderFallback.ExceptionFallback;
+        encoding.DecoderFallback = action switch
+        {
+            JavaCodingErrorAction.Report => DecoderFallback.ExceptionFallback,
+            JavaCodingErrorAction.Replace => new DecoderReplacementFallback("\ufffd"),
+            _ => throw new ArgumentOutOfRangeException(nameof(action))
+        };
         return this;
     }
 
     public string Decode(JavaByteBuffer buffer)
     {
         ArgumentNullException.ThrowIfNull(buffer);
-        return encoding.GetString(JavaCompat.ToUnsignedBytes(
-            buffer.ReadRemaining(buffer.Remaining)));
+        var start = buffer.position();
+        using var view = buffer.duplicate();
+        var bytes = JavaCompat.ToUnsignedBytes(view.ReadRemaining(view.Remaining));
+        try
+        {
+            var result = Decode(bytes);
+            buffer.position(start + bytes.Length);
+            return result;
+        }
+        catch (DecoderFallbackException error)
+        {
+            var bom = javaUtf16 && bytes.Length >= 2 &&
+                      ((bytes[0] == 0xfe && bytes[1] == 0xff) ||
+                       (bytes[0] == 0xff && bytes[1] == 0xfe))
+                ? 2 : 0;
+            buffer.position(start + Math.Max(0, Math.Min(bom + error.Index, bytes.Length)));
+            throw;
+        }
+    }
+
+    private string Decode(byte[] bytes)
+    {
+        if (!javaUtf16) return encoding.GetString(bytes);
+        var offset = 0;
+        Encoding selected = Encoding.BigEndianUnicode;
+        if (bytes.Length >= 2 && bytes[0] == 0xfe && bytes[1] == 0xff)
+        {
+            offset = 2;
+        }
+        else if (bytes.Length >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe)
+        {
+            selected = Encoding.Unicode;
+            offset = 2;
+        }
+        selected = (Encoding)selected.Clone();
+        selected.DecoderFallback = encoding.DecoderFallback;
+        return selected.GetString(bytes, offset, bytes.Length - offset);
     }
 }
 
@@ -831,7 +879,24 @@ internal static partial class JavaCompat
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        return Encoding.GetEncoding(name);
+        if (name.Equals("UTF-8", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("UTF8", StringComparison.OrdinalIgnoreCase))
+            return JavaStandardCharsets.UTF8;
+        if (name.Equals("UTF-16", StringComparison.OrdinalIgnoreCase))
+            return JavaStandardCharsets.UTF16;
+        if (name.Equals("UTF-16BE", StringComparison.OrdinalIgnoreCase))
+            return JavaStandardCharsets.UTF16BE;
+        if (name.Equals("UTF-16LE", StringComparison.OrdinalIgnoreCase))
+            return JavaStandardCharsets.UTF16LE;
+        if (name.Equals("US-ASCII", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("ASCII", StringComparison.OrdinalIgnoreCase))
+            return JavaStandardCharsets.USASCII;
+        if (name.Equals("ISO-8859-1", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("ISO8859-1", StringComparison.OrdinalIgnoreCase))
+            return JavaStandardCharsets.ISO88591;
+        var encoding = (Encoding)Encoding.GetEncoding(name).Clone();
+        encoding.DecoderFallback = new DecoderReplacementFallback("\ufffd");
+        return encoding;
     }
 
     internal static string CharsetName(Encoding encoding)

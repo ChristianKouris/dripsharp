@@ -480,7 +480,8 @@
      "executable:java.io.BufferedInputStream#reset()"]]
    [:java-library.mapping.executable/handler-0035 ["executable:java.io.InputStream#skip(long)"]]
    [:java-library.mapping.executable/handler-0037
-    ["executable:java.io.Reader#read(char[],int,int)"]]
+    ["executable:java.io.Reader#read(char[],int,int)"
+     "executable:java.io.InputStreamReader#read(char[],int,int)"]]
    [:java-library.mapping.executable/handler-0038 ["executable:java.io.StringWriter#toString()"]]
    [:java-library.mapping.executable/handler-0040 ["executable:java.io.Writer#write(char[])"]]
    [:java-library.mapping.executable/handler-0041
@@ -2559,6 +2560,8 @@
    "global::DripSharp.Runtime.JavaRoundingMode.Up"
    "field:java.nio.charset.CodingErrorAction#REPORT"
    "global::DripSharp.Runtime.JavaCodingErrorAction.Report"
+   "field:java.nio.charset.CodingErrorAction#REPLACE"
+   "global::DripSharp.Runtime.JavaCodingErrorAction.Replace"
    "field:java.nio.ByteOrder#BIG_ENDIAN"
    "global::DripSharp.Runtime.JavaByteOrder.BigEndian"
    "field:java.nio.ByteOrder#LITTLE_ENDIAN"

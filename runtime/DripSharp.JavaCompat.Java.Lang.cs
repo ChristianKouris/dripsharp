@@ -716,7 +716,16 @@ internal static partial class JavaCompat
         return char.ConvertFromUtf32(codePoint);
     }
 
-    internal static int CodePointAt(string value, int index) => char.ConvertToUtf32(value, index);
+    internal static int CodePointAt(string value, int index)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if ((uint)index >= (uint)value.Length) throw new IndexOutOfRangeException();
+        var first = value[index];
+        return char.IsHighSurrogate(first) && index + 1 < value.Length &&
+               char.IsLowSurrogate(value[index + 1])
+            ? char.ConvertToUtf32(first, value[index + 1])
+            : first;
+    }
     internal static int CharacterType(int codePoint) =>
         !Rune.IsValid(codePoint) ? 0 : Rune.GetUnicodeCategory(new Rune(codePoint)) switch
     {

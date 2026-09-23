@@ -397,6 +397,7 @@ internal static class Program
                 var arity = operation switch
                 {
                     "collections/run" => 2,
+                    "charset/decode" or "charset/stream" or "charset/string-ops" => 3,
                     "numeric/int-div" or "numeric/int-rem" or "numeric/long-div" or "numeric/long-rem" => 2,
                     "byte-buffer/wrap" or "string/hash" or "long/hash" => 1,
                     "byte-buffer/capacity" or "byte-buffer/position" or "byte-buffer/limit" or
@@ -453,6 +454,13 @@ internal static class Program
                 var values = fields.Skip(5).Select(CaseValue).ToArray();
                 if (operation == "byte-buffer/wrap" && values[0] is not null and not sbyte[] ||
                     operation == "binary-data/open" && values[0] is not sbyte[] ||
+                    operation == "charset/decode" &&
+                    (values[0] is not string || values[1] is not System.Numerics.BigInteger ||
+                     values[2] is not string) ||
+                    operation == "charset/stream" && values.Any(value => value is not string) ||
+                    operation == "charset/string-ops" &&
+                    (values[0] is not string || values[1] is not System.Numerics.BigInteger ||
+                     values[2] is not System.Numerics.BigInteger) ||
                     operation == "string/hash" && values[0] is not null and not string ||
                     operation == "long/hash" && values[0] is not System.Numerics.BigInteger ||
                     operation is "byte-array-input/open" or "filter-input/open" &&
@@ -480,6 +488,12 @@ internal static class Program
                     switch (operation)
                     {
                         case "collections/run": result = StringToken(CollectionProbe.Run(IntValue(values[0]), (string)values[1]!)); break;
+                        case "charset/decode": result = StringToken(CharsetProbe.Decode(
+                            (string)values[0]!, IntValue(values[1]), (string)values[2]!)); break;
+                        case "charset/stream": result = StringToken(CharsetProbe.Stream(
+                            (string)values[0]!, (string)values[1]!, (string)values[2]!)); break;
+                        case "charset/string-ops": result = StringToken(CharsetProbe.StringOps(
+                            (string)values[0]!, IntValue(values[1]), IntValue(values[2]))); break;
                         case "numeric/int-div": result = "i:" + JavaCompat.IntegralDivide(unchecked((int)numericLeft), unchecked((int)numericRight)).ToString(CultureInfo.InvariantCulture); break;
                         case "numeric/int-rem": result = "i:" + JavaCompat.IntegralRemainder(unchecked((int)numericLeft), unchecked((int)numericRight)).ToString(CultureInfo.InvariantCulture); break;
                         case "numeric/long-div": result = "i:" + JavaCompat.IntegralDivide(numericLeft, numericRight).ToString(CultureInfo.InvariantCulture); break;

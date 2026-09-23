@@ -6,12 +6,12 @@
             [dripsharp.util :as util])
   (:import [java.util Random]))
 
-(def generator-identity {:id :java-compat-operations :version 5})
+(def generator-identity {:id :java-compat-operations :version 6})
 (def default-limits {:max-operations 32 :max-value-units 32 :max-input-bytes 65536})
 (def generated-families
   "Families with an explicit generator/domain model. Kept separate from the
   larger fixed-case registry so registration never implies generation support."
-  ["binary-data" "byte-array-input" "byte-array-output" "byte-buffer" "file"
+  ["binary-data" "byte-array-input" "byte-array-output" "byte-buffer" "charset" "file"
    "filter-input" "filter-output" "long" "numeric" "random-access" "string"])
 
 (defn- require! [condition message]
@@ -28,6 +28,9 @@
 (defn- pick [^Random rng values] (nth values (.nextInt rng (count values))))
 (defn- biased [^Random rng boundaries random-value]
   (if (< (.nextInt rng 4) 3) (pick rng boundaries) (random-value)))
+
+(defn- utf16-token [value]
+  (str "u:" (apply str (map #(format "%04x" (int %)) value))))
 
 (defn value
   "Boundary-biased exact wire token. Path values are Java pathname strings,
@@ -309,6 +312,7 @@
                                                "position" "set-length" "close"]
                                         ["open" "open" "read-one"]))
           "numeric" (pick rng ["int-div" "int-rem" "long-div" "long-rem"])
+          "charset" (pick rng ["decode" "stream" "string-ops"])
           "file" "inspect"
           "hash")
         bytes #(value rng :bytes max-units)
@@ -363,6 +367,25 @@
             ("read-fully" "write-buffer") [(bytes)]
             ("seek" "skip" "set-length") [(small-int)] [])
           "numeric" [(value rng :integer max-units) (value rng :integer max-units)]
+          "charset"
+          (let [charset (utf16-token (pick rng ["UTF-8" "UTF-16" "UTF-16BE" "UTF-16LE"
+                                                "US-ASCII" "ISO-8859-1" "windows-1252"]))
+                data #(if (< max-units 2) "b:"
+                          (value rng :bytes (quot max-units 2)))]
+            (case operation
+              "decode" (let [bytes (data)]
+                         [charset (str "i:" (.nextInt rng 2))
+                          (utf16-token (subs bytes 2))])
+              "stream" (let [bytes (data)
+                             plans (filterv #(<= (count %) max-units)
+                                            ["1" "1,1" "1,2,1" "2,2,2"])]
+                         [charset (utf16-token (subs bytes 2))
+                          (utf16-token (pick rng plans))])
+              "string-ops" (let [text (value rng :string max-units)
+                                 size (quot (- (count text) 2) 4)
+                                 begin (.nextInt rng (inc size))
+                                 end (+ begin (.nextInt rng (inc (- size begin))))]
+                             [text (str "i:" begin) (str "i:" end)])))
           "long" [(value rng :integer max-units)]
           "file" [(if (zero? (.nextInt rng 8)) "n:" (value rng :path max-units))]
           [(if (zero? (.nextInt rng 8)) "n:"
@@ -499,6 +522,16 @@
 (defn- bytes-token? [token]
   (and (string? token) (str/starts-with? token "b:")))
 
+(defn- utf16-text [token]
+  (when (and (string? token) (re-matches #"u:(?:[0-9a-f]{4})*" token))
+    (apply str (map #(char (Integer/parseInt (apply str %) 16))
+                    (partition 4 (subs token 2))))))
+
+(defn- hex-text? [token]
+  (let [text (utf16-text token)]
+    (and (some? text) (even? (count text))
+         (boolean (re-matches #"[0-9a-f]*" text)))))
+
 (defn- exact-buffer-range? [[buffer offset length]]
   (and (bytes-token? buffer) (integer-token? offset) (integer-token? length)
        (zero? (parse-long (subs offset 2)))
@@ -552,6 +585,26 @@
         false)
       "string" (and (= operation "hash") (= 1 (count arguments))
                     (or (= token "n:") (str/starts-with? token "u:")))
+      "charset"
+      (let [charset (utf16-text token)
+            supported? (contains? #{"UTF-8" "UTF-16" "UTF-16BE" "UTF-16LE"
+                                    "US-ASCII" "ISO-8859-1" "windows-1252"}
+                                  charset)]
+        (case operation
+          "decode" (and (= 3 (count arguments)) supported?
+                        (contains? #{"i:0" "i:1"} (second arguments))
+                        (hex-text? (nth arguments 2)))
+          "stream" (and (= 3 (count arguments)) supported?
+                        (hex-text? (second arguments))
+                        (boolean (re-matches #"[1-9][0-9]*(?:,[1-9][0-9]*)*"
+                                             (or (utf16-text (nth arguments 2)) "!"))))
+          "string-ops" (and (= 3 (count arguments)) (some? (utf16-text token))
+                            (every? integer-token? (rest arguments))
+                            (let [size (quot (- (count token) 2) 4)
+                                  begin (parse-long (subs (second arguments) 2))
+                                  end (parse-long (subs (nth arguments 2) 2))]
+                              (<= 0 begin end size)))
+          false))
       "numeric" (and (contains? #{"int-div" "int-rem" "long-div" "long-rem"} operation)
                      (= 2 (count arguments)) (every? integer-token? arguments))
       "long" (and (= operation "hash") (= 1 (count arguments)) (integer-token? token))
@@ -629,8 +682,9 @@
                         (= requires (if (and state (not constructor?)) [(:creator state)] []))
                         (every? seen requires)) "Invalid handle or construction dependency")
          (require! (operation-domain? family operation arguments) "Invalid operation domain")
-         (doseq [arg arguments]
-           (when (contains? #{\b \u} (first arg))
+         (doseq [[argument-index arg] (map-indexed vector arguments)]
+           (when (and (contains? #{\b \u} (first arg))
+                      (not (and (= family "charset") (zero? argument-index))))
              (require! (<= (quot (- (count arg) 2) (if (= \b (first arg)) 2 4))
                            (:max-value-units limits)) "Value exceeds unit limit")))
          (let [[exception next-state] (transition state row)]

@@ -57,6 +57,49 @@
     (is (thrown? clojure.lang.ExceptionInfo
                  (gen/generate 1 {:families ["unknown"]})))))
 
+(deftest charset-generation-records-decode-stream-and-utf16-boundaries
+  (let [records (mapv #(gen/generate % {:families ["charset"]
+                                        :max-operations 12}) (range 100))
+        operations (mapcat :operations records)]
+    (is (every? #(= % (gen/validate! %)) records))
+    (is (= #{"decode" "stream" "string-ops"}
+           (set (map :operation operations))))
+    (is (every? #(= "none" (:expected-exception %)) operations))
+    (is (every? empty? (map :requires operations)))
+    (is (some #(and (= "stream" (:operation %))
+                    (re-find #"002c" (nth (:arguments %) 2))) operations))))
+(deftest charset-generation-honors-small-value-limits
+  (doseq [limit [1 2 8 32]]
+    (let [record (gen/generate limit {:families ["charset"]
+                                      :max-value-units limit})]
+      (is (= record (gen/validate! record))))))
+
+(deftest charset-reducer-preserves-domain-and-semantic-identity
+  (let [record {:schema-version 1 :generator gen/generator-identity :seed 41
+                :limits gen/default-limits
+                :operations [{:family "charset" :case "h0" :handle "h0" :step "0"
+                              :operation "stream"
+                              :arguments ["u:005500540046002d0038"
+                                          "u:006300300061006600380030"
+                                          "u:0031002c0032002c0031"]
+                              :requires [] :expected-exception "none" :intent :valid}]}
+        difference (fn [candidate]
+                     (let [identity (select-keys (first (:operations candidate))
+                                                 cases/identity-keys)]
+                       {:status :failed :first-difference
+                        {:kind :semantic-difference :identity identity
+                         :expected-exception "none"
+                         :oracle (assoc identity :exception "none" :result "u:0061" :state "n:")
+                         :probe (assoc identity :exception "none" :result "u:0062" :state "n:")}}))
+        result (gen/shrink! record (difference record)
+                            (fn [candidate _] (difference candidate))
+                            {:max-attempts 100 :max-ms 1000})]
+    (is (pos? (:accepted result)))
+    (is (= (:record result) (gen/validate! (:record result))))
+    (is (= "charset" (get-in result [:signature :identity :family])))
+    (is (< (reduce + (map count (get-in result [:record :operations 0 :arguments])))
+           (reduce + (map count (get-in record [:operations 0 :arguments])))))))
+
 (deftest stateful-stream-and-random-access-generation-is-bounded-and-replayable
   (doseq [[family required-operations required-exceptions]
           [["byte-array-input" #{"open" "read-one" "read-buffer" "skip" "available"

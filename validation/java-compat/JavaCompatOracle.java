@@ -335,6 +335,7 @@ public final class JavaCompatOracle {
       var operation = fields[0] + "/" + fields[3];
       int arity = switch (operation) {
         case "collections/run" -> 2;
+        case "charset/decode", "charset/stream", "charset/string-ops" -> 3;
         case "numeric/int-div", "numeric/int-rem", "numeric/long-div", "numeric/long-rem" -> 2;
         case "byte-buffer/wrap", "string/hash", "long/hash" -> 1;
         case "byte-buffer/capacity", "byte-buffer/position", "byte-buffer/limit",
@@ -408,6 +409,12 @@ public final class JavaCompatOracle {
       try {
         switch (operation) {
           case "collections/run" -> result = stringToken(micro.CollectionMachine.run(intValue(values[0]), (String) values[1]));
+          case "charset/decode" -> result = stringToken(micro.CharsetMachine.decode(
+              (String) values[0], intValue(values[1]), (String) values[2]));
+          case "charset/stream" -> result = stringToken(micro.CharsetMachine.stream(
+              (String) values[0], (String) values[1], (String) values[2]));
+          case "charset/string-ops" -> result = stringToken(micro.CharsetMachine.stringOps(
+              (String) values[0], intValue(values[1]), intValue(values[2])));
           case "numeric/int-div" -> result = "i:" + ((int)numericLeft / (int)numericRight);
           case "numeric/int-rem" -> result = "i:" + ((int)numericLeft % (int)numericRight);
           case "numeric/long-div" -> result = "i:" + (numericLeft / numericRight);

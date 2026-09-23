@@ -221,6 +221,12 @@ parent-segment, and embedded-NUL pathnames. Recorded file operations exercise
 the controlled filesystem sandbox separately. Public `FileInfo` adaptation
 remains defined in `doc/java-file-compatibility.md`.
 
+The `charset` generator records the exact charset name, byte spelling,
+replacement/reporting policy, UTF-16 units, and bounded chunk plan. It covers
+UTF-8, UTF-16 variants, US-ASCII, ISO-8859-1, and Windows-1252. The combined
+direct/translated runner and focused boundary replays are documented in
+`validation/microprograms/charset/README.md`.
+
 Each record includes the generator ID/version, seed, generation runtime,
 limits, and the **actual operations and exact value tokens**. An explicit
 `:handle` maps to the existing runner's `(family, case)` state key; `:requires`

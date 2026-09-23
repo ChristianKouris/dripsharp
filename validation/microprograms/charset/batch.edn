@@ -1,0 +1,17 @@
+{:schema-version 1
+ :id "charset"
+ :generator {:id :charset-boundaries :version 1 :seed nil}
+ :sources ["subjects/micro/CharsetMachine.java"]
+ :configuration "../destination.edn"
+ :input "cases.tsv"
+ :java-observer "../MicroObserver.java"
+ :dotnet-observer "../Program.cs"
+ :operations {"decode" {:java-type "micro.CharsetMachine" :java-method "decode"
+                         :dotnet-type "DripSharp.Microprograms.CharsetMachine" :dotnet-method "Decode"
+                         :parameters ["string" "int" "string"]}
+              "stream" {:java-type "micro.CharsetMachine" :java-method "stream"
+                         :dotnet-type "DripSharp.Microprograms.CharsetMachine" :dotnet-method "Stream"
+                         :parameters ["string" "string" "string"]}
+              "string-ops" {:java-type "micro.CharsetMachine" :java-method "stringOps"
+                            :dotnet-type "DripSharp.Microprograms.CharsetMachine" :dotnet-method "StringOps"
+                            :parameters ["string" "int" "int"]}}}

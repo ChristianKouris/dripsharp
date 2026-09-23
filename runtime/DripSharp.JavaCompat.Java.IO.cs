@@ -729,6 +729,8 @@ public
 #endif
 abstract class JavaInputStream : Stream, IDisposable
 {
+    private bool disposeDispatching;
+
     public abstract int Read();
 
     public virtual int Read(sbyte[] buffer) => Read(buffer, 0, buffer.Length);
@@ -788,7 +790,41 @@ abstract class JavaInputStream : Stream, IDisposable
 
     public override int ReadByte() => Read();
     public override void Flush() { }
-    public new virtual void Dispose() => base.Dispose();
+    public new virtual void Dispose()
+    {
+        if (disposeDispatching)
+        {
+            base.Dispose();
+            return;
+        }
+        disposeDispatching = true;
+        try
+        {
+            base.Dispose();
+        }
+        finally
+        {
+            disposeDispatching = false;
+        }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && !disposeDispatching)
+        {
+            disposeDispatching = true;
+            try
+            {
+                Dispose();
+            }
+            finally
+            {
+                disposeDispatching = false;
+            }
+        }
+        base.Dispose(disposing);
+    }
+
     void IDisposable.Dispose() => Dispose();
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
