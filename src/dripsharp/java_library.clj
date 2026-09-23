@@ -7963,7 +7963,7 @@
                          [(raw "{\n")
                           (when reference? (raw (str "var " resource-name " = ")))
                           (child-node children resource)
-                          (raw (str ";\nglobal::System.Exception? " primary " = null;\ntry "))
+                          (raw (str ";\nglobal::System.Exception " primary " = null!;\ntry "))
                           guarded
                           (raw (str " catch (global::System.Exception " caught ") {\n"
                                     primary " = " caught ";\nthrow;\n} finally {\n"))

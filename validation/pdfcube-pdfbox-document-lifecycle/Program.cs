@@ -43,6 +43,8 @@ internal static class Program
             ObserveImport();
             ObserveScratchAndStreamLifetime();
             ObserveLifecycleFailures();
+            ObservePublicDocumentIo(
+                Path.Combine(exchange, "dotnet-lifecycle.pdf"));
             ObserveCrossRuntimeReopen(
                 Path.Combine(exchange, "java-lifecycle.pdf"));
 
@@ -529,6 +531,142 @@ internal static class Program
             !File.Exists(invalidPath));
     }
 
+    private static void ObservePublicDocumentIo(string sharedPath)
+    {
+        var bytes = File.ReadAllBytes(sharedPath);
+        using (var fileDocument = Loader.LoadPDF(new FileInfo(sharedPath)))
+        using (var memoryDocument = Loader.LoadPDF(ToSigned(bytes)))
+        using (var boundary = new RandomAccessReadBuffer(
+                   new sbyte[] { 0, 127, -128, -1 }))
+        {
+            Observe(
+                "document-input",
+                "file-memory-and-boundary-bytes",
+                DescribeDocument(fileDocument),
+                DescribeDocument(memoryDocument),
+                boundary.Read(),
+                boundary.Read(),
+                boundary.Read(),
+                boundary.Read(),
+                boundary.Read());
+        }
+
+        foreach (var chunkSize in new[] { 1, 7, 4096 })
+        {
+            using var input = new ControlledInputStream(bytes, chunkSize);
+            var source = new RandomAccessReadBuffer(input);
+            string description;
+            using (var document = Loader.LoadPDF(source))
+                description = DescribeDocument(document);
+            Observe(
+                "document-input",
+                $"short-read-{chunkSize}",
+                description,
+                bytes.Length,
+                input.BytesRead,
+                input.Closed,
+                source.IsClosed());
+        }
+
+        foreach (var truncation in new[]
+                 {
+                     (Name: "empty", Length: 0),
+                     (Name: "header-byte", Length: 1),
+                     (Name: "half", Length: bytes.Length / 2),
+                     (Name: "last-byte", Length: bytes.Length - 1)
+                 })
+        {
+            using var input = new ControlledInputStream(
+                bytes.AsSpan(0, truncation.Length).ToArray(), 7);
+            var source = new RandomAccessReadBuffer(input);
+            string outcome;
+            try
+            {
+                using var document = Loader.LoadPDF(source);
+                outcome = "ok:" + DescribeDocument(document);
+            }
+            catch (IOException)
+            {
+                outcome = "io";
+            }
+            Observe(
+                "document-input",
+                "truncated-" + truncation.Name,
+                truncation.Length,
+                input.BytesRead,
+                outcome,
+                input.Closed,
+                source.IsClosed());
+            source.Dispose();
+        }
+
+        foreach (var failurePosition in new[] { 0, 17 })
+        {
+            using var input = new ControlledInputStream(bytes, 7, failurePosition);
+            var failure = "none";
+            try
+            {
+                using var ignored = new RandomAccessReadBuffer(input);
+            }
+            catch (IOException)
+            {
+                failure = "io";
+            }
+            if (failure == "none")
+                throw new InvalidOperationException(
+                    "Configured input failure was not observed.");
+            Observe(
+                "stream-failure",
+                $"buffer-read-{failurePosition}",
+                "buffer",
+                failure,
+                input.BytesRead,
+                input.Closed);
+        }
+
+        foreach (var failurePosition in new[] { 0, 64 })
+        {
+            using var document = Loader.LoadPDF(ToSigned(bytes));
+            using var output = new FailingOutputStream(failurePosition);
+            var failure = "none";
+            try
+            {
+                document.Save(output, CompressParameters.NoCompression);
+            }
+            catch (IOException)
+            {
+                failure = "io";
+            }
+            if (failure == "none")
+                throw new InvalidOperationException(
+                    "Configured output failure was not observed.");
+
+            using var retry = new MemoryStream();
+            document.Save(retry, CompressParameters.NoCompression);
+            using var reopened = Loader.LoadPDF(ToSigned(retry.ToArray()));
+            Observe(
+                "stream-output",
+                $"save-failure-{failurePosition}",
+                "save",
+                failure,
+                output.BytesWritten,
+                output.Closed,
+                reopened.GetNumberOfPages(),
+                reopened.GetDocumentInformation().GetTitle());
+        }
+    }
+
+    private static string DescribeDocument(PDDocument document) =>
+        string.Join(
+            ",",
+            document.GetNumberOfPages(),
+            document.GetDocumentInformation().GetTitle(),
+            document.GetDocumentInformation().GetAuthor(),
+            document.GetDocumentCatalog().GetLanguage(),
+            document.GetVersion().ToString(CultureInfo.InvariantCulture),
+            document.GetPage(0).GetRotation(),
+            CollapseWhitespace(ReadAll(document.GetPage(0).GetContents())));
+
     private static void ObserveCrossRuntimeReopen(string path)
     {
         using var loaded = Loader.LoadPDF(new FileInfo(path));
@@ -693,5 +831,117 @@ internal static class Program
             Closed = true;
             base.Dispose(disposing);
         }
+    }
+
+    private sealed class ControlledInputStream : Stream
+    {
+        private readonly byte[] bytes;
+        private readonly int maxChunk;
+        private readonly int? failAt;
+        private int position;
+
+        internal ControlledInputStream(byte[] bytes, int maxChunk, int? failAt = null)
+        {
+            this.bytes = bytes;
+            this.maxChunk = maxChunk;
+            this.failAt = failAt;
+        }
+
+        internal int BytesRead => position;
+        internal bool Closed { get; private set; }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (failAt.HasValue && position >= failAt.Value)
+                throw new IOException("configured input failure");
+            if (position >= bytes.Length)
+                return 0;
+            var available = bytes.Length - position;
+            if (failAt.HasValue)
+                available = Math.Min(available, failAt.Value - position);
+            var length = Math.Min(Math.Min(count, maxChunk), available);
+            if (length == 0)
+                throw new IOException("configured input failure");
+            Buffer.BlockCopy(bytes, position, buffer, offset, length);
+            position += length;
+            return length;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            Closed = true;
+            base.Dispose(disposing);
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) =>
+            throw new NotSupportedException();
+        public override void SetLength(long value) =>
+            throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class FailingOutputStream : Stream
+    {
+        private readonly int failAt;
+
+        internal FailingOutputStream(int failAt) => this.failAt = failAt;
+
+        internal int BytesWritten { get; private set; }
+        internal bool Closed { get; private set; }
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            if (count == 0)
+                return;
+            if (BytesWritten >= failAt)
+                throw new IOException("configured output failure");
+            var length = Math.Min(count, failAt - BytesWritten);
+            BytesWritten += length;
+            if (length != count)
+                throw new IOException("configured output failure");
+        }
+
+        public override void WriteByte(byte value)
+        {
+            if (BytesWritten >= failAt)
+                throw new IOException("configured output failure");
+            BytesWritten++;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            Closed = true;
+            base.Dispose(disposing);
+        }
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => BytesWritten;
+        public override long Position
+        {
+            get => BytesWritten;
+            set => throw new NotSupportedException();
+        }
+        public override void Flush()
+        {
+        }
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) =>
+            throw new NotSupportedException();
+        public override void SetLength(long value) =>
+            throw new NotSupportedException();
     }
 }

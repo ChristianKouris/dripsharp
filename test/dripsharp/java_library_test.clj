@@ -4261,6 +4261,7 @@
          source
          "global::System.IO.Stream a = first;"))
     (is (contains-csharp? source "global::System.IO.Stream b = second;"))
+    (is (not (str/includes? source "global::System.Exception?")))
     (is (= 2 (count (re-seq #"JavaCompat.CloseResource" source))))
     (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
     (is (zero? (:exit

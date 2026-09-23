@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.GregorianCalendar;
@@ -60,6 +61,7 @@ public final class PdfBoxDocumentLifecycleOracle {
     observeImport();
     observeScratchAndStreamLifetime();
     observeLifecycleFailures();
+    observePublicDocumentIo(exchange.resolve("dotnet-lifecycle.pdf"));
     observeCrossRuntimeReopen(exchange.resolve("dotnet-lifecycle.pdf"));
 
     Files.write(output, OBSERVATIONS, StandardCharsets.UTF_8);
@@ -538,6 +540,133 @@ public final class PdfBoxDocumentLifecycleOracle {
         !Files.exists(invalidPath));
   }
 
+  private static void observePublicDocumentIo(Path sharedPath) throws Exception {
+    byte[] bytes = Files.readAllBytes(sharedPath);
+    try (PDDocument fileDocument = Loader.loadPDF(sharedPath.toFile());
+        PDDocument memoryDocument = Loader.loadPDF(bytes);
+        org.apache.pdfbox.io.RandomAccessReadBuffer boundary =
+            new org.apache.pdfbox.io.RandomAccessReadBuffer(
+                new byte[] {0, 127, (byte) 128, (byte) 255})) {
+      observe(
+          "document-input",
+          "file-memory-and-boundary-bytes",
+          describeDocument(fileDocument),
+          describeDocument(memoryDocument),
+          boundary.read(),
+          boundary.read(),
+          boundary.read(),
+          boundary.read(),
+          boundary.read());
+    }
+
+    for (int chunkSize : new int[] {1, 7, 4096}) {
+      ControlledInputStream input = new ControlledInputStream(bytes, chunkSize, null);
+      org.apache.pdfbox.io.RandomAccessReadBuffer source =
+          new org.apache.pdfbox.io.RandomAccessReadBuffer(input);
+      String description;
+      try (PDDocument document = Loader.loadPDF(source)) {
+        description = describeDocument(document);
+      }
+      observe(
+          "document-input",
+          "short-read-" + chunkSize,
+          description,
+          bytes.length,
+          input.bytesRead(),
+          input.closed,
+          source.isClosed());
+      input.close();
+    }
+
+    String[] truncationNames = {"empty", "header-byte", "half", "last-byte"};
+    int[] truncationLengths = {0, 1, bytes.length / 2, bytes.length - 1};
+    for (int index = 0; index < truncationNames.length; index++) {
+      ControlledInputStream input =
+          new ControlledInputStream(Arrays.copyOf(bytes, truncationLengths[index]), 7, null);
+      org.apache.pdfbox.io.RandomAccessReadBuffer source =
+          new org.apache.pdfbox.io.RandomAccessReadBuffer(input);
+      String outcome;
+      try (PDDocument document = Loader.loadPDF(source)) {
+        outcome = "ok:" + describeDocument(document);
+      } catch (IOException error) {
+        outcome = "io";
+      }
+      observe(
+          "document-input",
+          "truncated-" + truncationNames[index],
+          truncationLengths[index],
+          input.bytesRead(),
+          outcome,
+          input.closed,
+          source.isClosed());
+      source.close();
+      input.close();
+    }
+
+    for (int failurePosition : new int[] {0, 17}) {
+      ControlledInputStream input = new ControlledInputStream(bytes, 7, failurePosition);
+      String failure = "none";
+      try (org.apache.pdfbox.io.RandomAccessReadBuffer ignored =
+          new org.apache.pdfbox.io.RandomAccessReadBuffer(input)) {
+        // Construction consumes the stream and reaches the configured failure.
+      } catch (IOException error) {
+        failure = "io";
+      }
+      if ("none".equals(failure)) {
+        throw new IllegalStateException("Configured input failure was not observed.");
+      }
+      observe(
+          "stream-failure",
+          "buffer-read-" + failurePosition,
+          "buffer",
+          failure,
+          input.bytesRead(),
+          input.closed);
+      input.close();
+    }
+
+    for (int failurePosition : new int[] {0, 64}) {
+      try (PDDocument document = Loader.loadPDF(bytes);
+          FailingOutputStream output = new FailingOutputStream(failurePosition)) {
+        String failure = "none";
+        try {
+          document.save(output, CompressParameters.NO_COMPRESSION);
+        } catch (IOException error) {
+          failure = "io";
+        }
+        if ("none".equals(failure)) {
+          throw new IllegalStateException("Configured output failure was not observed.");
+        }
+        try (ByteArrayOutputStream retry = new ByteArrayOutputStream()) {
+          document.save(retry, CompressParameters.NO_COMPRESSION);
+          try (PDDocument reopened = Loader.loadPDF(retry.toByteArray())) {
+            observe(
+                "stream-output",
+                "save-failure-" + failurePosition,
+                "save",
+                failure,
+                output.bytesWritten,
+                output.closed,
+                reopened.getNumberOfPages(),
+                reopened.getDocumentInformation().getTitle());
+          }
+        }
+      }
+    }
+  }
+
+  private static String describeDocument(PDDocument document) throws IOException {
+    return String.join(
+        ",",
+        Integer.toString(document.getNumberOfPages()),
+        document.getDocumentInformation().getTitle(),
+        document.getDocumentInformation().getAuthor(),
+        document.getDocumentCatalog().getLanguage(),
+        Float.toString(document.getVersion()),
+        Integer.toString(document.getPage(0).getRotation()),
+        collapseWhitespace(readAll(document.getPage(0).getContents())));
+  }
+
   private static void observeCrossRuntimeReopen(Path path) throws Exception {
     try (PDDocument loaded = Loader.loadPDF(path.toFile())) {
       String firstContent =
@@ -704,6 +833,97 @@ public final class PdfBoxDocumentLifecycleOracle {
 
   private static final class TrackingOutputStream extends ByteArrayOutputStream {
     private boolean closed;
+
+    @Override
+    public void close() throws IOException {
+      closed = true;
+      super.close();
+    }
+  }
+
+  private static final class ControlledInputStream extends InputStream {
+    private final byte[] bytes;
+    private final int maxChunk;
+    private final Integer failAt;
+    private int position;
+    private boolean closed;
+
+    private ControlledInputStream(byte[] bytes, int maxChunk, Integer failAt) {
+      this.bytes = bytes;
+      this.maxChunk = maxChunk;
+      this.failAt = failAt;
+    }
+
+    private int bytesRead() {
+      return position;
+    }
+
+    @Override
+    public int read() throws IOException {
+      byte[] one = new byte[1];
+      int count = read(one, 0, 1);
+      return count == -1 ? -1 : one[0] & 255;
+    }
+
+    @Override
+    public int read(byte[] target, int offset, int length) throws IOException {
+      if (failAt != null && position >= failAt) {
+        throw new IOException("configured input failure");
+      }
+      if (position >= bytes.length) {
+        return -1;
+      }
+      int available = bytes.length - position;
+      if (failAt != null) {
+        available = Math.min(available, failAt - position);
+      }
+      int count = Math.min(Math.min(length, maxChunk), available);
+      if (count == 0) {
+        throw new IOException("configured input failure");
+      }
+      System.arraycopy(bytes, position, target, offset, count);
+      position += count;
+      return count;
+    }
+
+    @Override
+    public void close() throws IOException {
+      closed = true;
+      super.close();
+    }
+  }
+
+  private static final class FailingOutputStream extends OutputStream {
+    private final int failAt;
+    private int bytesWritten;
+    private boolean closed;
+
+    private FailingOutputStream(int failAt) {
+      this.failAt = failAt;
+    }
+
+    @Override
+    public void write(int value) throws IOException {
+      if (bytesWritten >= failAt) {
+        throw new IOException("configured output failure");
+      }
+      bytesWritten++;
+    }
+
+    @Override
+    public void write(byte[] source, int offset, int length) throws IOException {
+      if (length == 0) {
+        return;
+      }
+      if (bytesWritten >= failAt) {
+        throw new IOException("configured output failure");
+      }
+      int count = Math.min(length, failAt - bytesWritten);
+      bytesWritten += count;
+      if (count != length) {
+        throw new IOException("configured output failure");
+      }
+    }
 
     @Override
     public void close() throws IOException {

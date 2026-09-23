@@ -5,9 +5,9 @@
             [clojure.string :as str]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
-            [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.target-execution :as target-execution])
   (:import [java.io File]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path StandardCopyOption]
@@ -18,10 +18,11 @@
 
 (def required-trace-families
   #{"catalog" "content-error" "content-stream" "document-info"
-    "document-lifecycle" "document-version" "import" "loader-error"
+    "document-input" "document-lifecycle" "document-version" "import" "loader-error"
     "package-reopen" "page-inheritance" "page-tree-error"
     "page-tree-malformed" "page-tree-mutation" "resource-cache"
-    "resource-ownership" "scratch-storage" "stream-lifetime"})
+    "resource-ownership" "scratch-storage" "stream-failure"
+    "stream-lifetime" "stream-output"})
 
 (defn- fail! [message data]
   (throw
@@ -183,12 +184,16 @@
                    :directory consumer-root
                    :timeout-ms 300000})))
 
+(defn- verify-package-consumption!
+  [options]
+  (target-execution/package! (assoc options :target :pdfcube)))
+
 (defn verify!
   "Runs clean deterministic packaging, independent package consumption, and
   normalized Java/.NET document lifecycle differential validation."
   ([] (verify! {}))
   ([{:keys [workspace-root package-fn run-command!]
-     :or {package-fn packaging/verify-package-consumption!
+     :or {package-fn verify-package-consumption!
           run-command! process/run!}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
          package-proof
