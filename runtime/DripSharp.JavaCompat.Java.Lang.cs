@@ -1451,6 +1451,44 @@ internal static partial class JavaCompat
             System.Reflection.BindingFlags.Instance |
             System.Reflection.BindingFlags.NonPublic);
 
+    // Generated assemblies can each contain their own internal JavaCompat.
+    // Keep suppression on the exception so it survives assembly boundaries.
+    private const string JavaSuppressedKey = "DripSharp.JavaCompat.SuppressedExceptions";
+
+    internal static void AddSuppressed(Exception exception, Exception suppressed)
+    {
+        if (exception is null || suppressed is null) throw new NullReferenceException();
+        if (ReferenceEquals(exception, suppressed)) throw new ArgumentException("Self-suppression is not permitted.");
+        lock (exception)
+        {
+            if (exception.Data[JavaSuppressedKey] is not List<Exception> values)
+            {
+                values = new List<Exception>();
+                exception.Data[JavaSuppressedKey] = values;
+            }
+            values.Add(suppressed);
+        }
+    }
+
+    internal static Exception[] GetSuppressed(Exception exception)
+    {
+        if (exception is null) throw new NullReferenceException();
+        lock (exception)
+            return exception.Data[JavaSuppressedKey] is List<Exception> values
+                ? values.ToArray() : Array.Empty<Exception>();
+    }
+
+    internal static void CloseResource(IDisposable? resource, Exception? primary)
+    {
+        if (resource is null) return;
+        if (primary is null) resource.Dispose();
+        else
+        {
+            try { resource.Dispose(); }
+            catch (Exception closeFailure) { AddSuppressed(primary, closeFailure); }
+        }
+    }
+
     internal static Exception InitCause(Exception exception, Exception? cause)
     {
         ArgumentNullException.ThrowIfNull(exception);

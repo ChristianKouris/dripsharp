@@ -1,0 +1,17 @@
+{:schema-version 1
+ :id "java-io"
+ :generator {:id :java-io-templates :version 1 :seed nil}
+ :sources ["subjects/micro/IoFlows.java"]
+ :configuration "../destination.edn"
+ :input "cases.tsv"
+ :java-observer "../MicroObserver.java"
+ :dotnet-observer "../Program.cs"
+ :dotnet-consumer "NativeConsumer.cs"
+ :operations {"wrapper-cleanup" {:java-type "micro.IoFlows" :java-method "wrapperCleanup" :dotnet-type "DripSharp.Microprograms.IoFlows" :dotnet-method "WrapperCleanup" :parameters ["int"]}
+              "suppression" {:java-type "micro.IoFlows" :java-method "suppression" :dotnet-type "DripSharp.Microprograms.IoFlows" :dotnet-method "Suppression" :parameters []}
+              "overloads" {:java-type "micro.IoFlows" :java-method "overloads" :dotnet-type "DripSharp.Microprograms.IoFlows" :dotnet-method "Overloads" :parameters ["int"]}
+              "referenced" {:java-type "micro.IoFlows" :java-method "referenced" :dotnet-type "DripSharp.Microprograms.IoFlows" :dotnet-method "Referenced" :parameters ["int"]}
+              "reads" {:java-type "micro.IoFlows" :java-method "reads" :dotnet-type "DripSharp.Microprograms.IoFlows" :dotnet-method "Reads" :parameters ["int" "int" "int"]}
+              "byte-array" {:java-type "micro.IoFlows" :java-method "byteArray" :dotnet-type "DripSharp.Microprograms.IoFlows" :dotnet-method "ByteArray" :parameters ["int"]}
+              "cleanup" {:java-type "micro.IoFlows" :java-method "cleanup" :dotnet-type "DripSharp.Microprograms.IoFlows" :dotnet-method "Cleanup" :parameters ["int"]}
+              "writes" {:java-type "micro.IoFlows" :java-method "writes" :dotnet-type "DripSharp.Microprograms.IoFlows" :dotnet-method "Writes" :parameters ["int" "int"]}}}

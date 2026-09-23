@@ -62,6 +62,14 @@
 
 (def lang-entries
   [(compat-call
+    :java.lang.throwable/get-suppressed
+    "executable:java.lang.Throwable#getSuppressed()"
+    "global::DripSharp.Runtime.JavaCompat.GetSuppressed")
+   (compat-call
+    :java.lang.throwable/add-suppressed
+    "executable:java.lang.Throwable#addSuppressed(java.lang.Throwable)"
+    "global::DripSharp.Runtime.JavaCompat.AddSuppressed")
+   (compat-call
     :java.lang.boolean/string-value
     "executable:java.lang.Boolean#toString()"
     "global::DripSharp.Runtime.JavaCompat.StringValueOf")

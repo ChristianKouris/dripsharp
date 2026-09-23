@@ -1,0 +1,81 @@
+DRIPSHARP_DIFFERENTIAL_CASES_V1
+io	reads-0-99	0	reads	none	i:99	i:0	i:0
+io	reads-0-99	1	reads	none	i:99	i:1	i:0
+io	reads-0-99	2	reads	none	i:99	i:2	i:0
+io	reads-0-99	3	reads	none	i:99	i:3	i:0
+io	reads-0-99	4	reads	none	i:99	i:4	i:0
+io	reads-0-99	5	reads	none	i:99	i:5	i:0
+io	reads-0-0	0	reads	none	i:0	i:0	i:0
+io	reads-0-0	1	reads	none	i:0	i:1	i:0
+io	reads-0-0	2	reads	none	i:0	i:2	i:0
+io	reads-0-0	3	reads	none	i:0	i:3	i:0
+io	reads-0-0	4	reads	none	i:0	i:4	i:0
+io	reads-0-0	5	reads	none	i:0	i:5	i:0
+io	reads-0-2	0	reads	none	i:2	i:0	i:0
+io	reads-0-2	1	reads	none	i:2	i:1	i:0
+io	reads-0-2	2	reads	none	i:2	i:2	i:0
+io	reads-0-2	3	reads	none	i:2	i:3	i:0
+io	reads-0-2	4	reads	none	i:2	i:4	i:0
+io	reads-0-2	5	reads	none	i:2	i:5	i:0
+io	reads-1-99	0	reads	none	i:99	i:0	i:1
+io	reads-1-99	1	reads	none	i:99	i:1	i:1
+io	reads-1-99	2	reads	none	i:99	i:2	i:1
+io	reads-1-99	3	reads	none	i:99	i:3	i:1
+io	reads-1-99	4	reads	none	i:99	i:4	i:1
+io	reads-1-99	5	reads	none	i:99	i:5	i:1
+io	reads-1-0	0	reads	none	i:0	i:0	i:1
+io	reads-1-0	1	reads	none	i:0	i:1	i:1
+io	reads-1-0	2	reads	none	i:0	i:2	i:1
+io	reads-1-0	3	reads	none	i:0	i:3	i:1
+io	reads-1-0	4	reads	none	i:0	i:4	i:1
+io	reads-1-0	5	reads	none	i:0	i:5	i:1
+io	reads-1-2	0	reads	none	i:2	i:0	i:1
+io	reads-1-2	1	reads	none	i:2	i:1	i:1
+io	reads-1-2	2	reads	none	i:2	i:2	i:1
+io	reads-1-2	3	reads	none	i:2	i:3	i:1
+io	reads-1-2	4	reads	none	i:2	i:4	i:1
+io	reads-1-2	5	reads	none	i:2	i:5	i:1
+io	byte-array	0	byte-array	none	i:0
+io	byte-array	1	byte-array	none	i:1
+io	byte-array	2	byte-array	none	i:2
+io	byte-array	3	byte-array	none	i:3
+io	byte-array	4	byte-array	none	i:4
+io	cleanup-0	0	cleanup	none	i:0
+io	cleanup-1	0	cleanup	none	i:1
+io	cleanup-2	0	cleanup	none	i:2
+io	cleanup-3	0	cleanup	none	i:3
+io	cleanup-4	0	cleanup	none	i:4
+io	cleanup-5	0	cleanup	none	i:5
+io	cleanup-6	0	cleanup	none	i:6
+io	cleanup-7	0	cleanup	none	i:7
+io	cleanup-8	0	cleanup	none	i:8
+io	writes-99	0	writes	none	i:99	i:0
+io	writes-99	1	writes	none	i:99	i:1
+io	writes-99	2	writes	none	i:99	i:2
+io	writes-99	3	writes	none	i:99	i:3
+io	writes-0	0	writes	none	i:0	i:0
+io	writes-0	1	writes	none	i:0	i:1
+io	writes-0	2	writes	none	i:0	i:2
+io	writes-0	3	writes	none	i:0	i:3
+io	writes-2	0	writes	none	i:2	i:0
+io	writes-2	1	writes	none	i:2	i:1
+io	writes-2	2	writes	none	i:2	i:2
+io	writes-2	3	writes	none	i:2	i:3
+io	overloads-0	0	overloads	none	i:0
+io	overloads-1	0	overloads	none	i:1
+io	overloads-2	0	overloads	none	i:2
+io	overloads-3	0	overloads	none	i:3
+io	overloads-4	0	overloads	none	i:4
+io	overloads-5	0	overloads	none	i:5
+io	referenced-0	0	referenced	none	i:0
+io	referenced-1	0	referenced	none	i:1
+io	referenced-2	0	referenced	none	i:2
+io	wrapper-cleanup-0	0	wrapper-cleanup	none	i:0
+io	wrapper-cleanup-1	0	wrapper-cleanup	none	i:1
+io	wrapper-cleanup-2	0	wrapper-cleanup	none	i:2
+io	wrapper-cleanup-3	0	wrapper-cleanup	none	i:3
+io	wrapper-cleanup-4	0	wrapper-cleanup	none	i:4
+io	wrapper-cleanup-5	0	wrapper-cleanup	none	i:5
+io	wrapper-cleanup-6	0	wrapper-cleanup	none	i:6
+io	wrapper-cleanup-7	0	wrapper-cleanup	none	i:7
+io	suppression	0	suppression	none

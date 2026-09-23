@@ -83,6 +83,8 @@ consumer fails the batch at `:native-consumer`. Its source is part of the replay
 snapshot. The [JavaFile batch](java-file/README.md) uses this for public
 `FileInfo` signatures, rejection of unrepresentable exports, external dispatch,
 and mutable collection aliasing.
+The [I/O batch](java-io/README.md) covers translated stream overloads, partial
+failures, resource exception precedence, and native .NET `Stream` consumers.
 
 ## Evidence and replay
 

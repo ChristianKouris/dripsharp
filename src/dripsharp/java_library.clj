@@ -4964,8 +4964,10 @@
      {:node (sequence-node [target-node (raw ".Length = ") (first arguments)])}),
    :java-library.mapping.executable/handler-0477
    (fn
-     [{:keys [target-node arguments]}]
-     {:node (compat-call "InputStreamRead" (into [target-node] arguments))}),
+     [{:keys [target-node arguments], target :target-element}]
+     {:node (if (instance? CtSuperAccess target)
+              (sequence-node [(raw "base.Read(") (sequence-node arguments ", ") (raw ")")])
+              (compat-call "InputStreamRead" (into [target-node] arguments)))}),
    :java-library.mapping.executable/handler-0208
    (fn
      [{:keys [target-node arguments]}]
@@ -5314,8 +5316,10 @@
      {:node (compat-call "StringLastIndexOf" (into [target-node] arguments))}),
    :java-library.mapping.executable/handler-0478
    (fn
-     [{:keys [target-node arguments]}]
-     {:node (compat-call "InputStreamRead" (into [target-node] arguments))}),
+     [{:keys [target-node arguments], target :target-element}]
+     {:node (if (instance? CtSuperAccess target)
+              (sequence-node [(raw "base.Read(") (sequence-node arguments ", ") (raw ")")])
+              (compat-call "InputStreamRead" (into [target-node] arguments)))}),
    :java-library.mapping.executable/handler-0087
    (fn
      [{:keys [arguments]}]
@@ -7936,20 +7940,41 @@
                catches (vec (.getCatchers element))
                finalizer (.getFinalizer element)]
            (let [body (child-node children (.getBody element))
-                 using-node
+                 resource-node
                  (when (seq resources)
                    (reduce
                     (fn [guarded resource]
-                      (sequence-node
-                       [(raw "using (")
-                        (child-node children resource)
-                        (raw ") ") guarded]))
+                      (let [{:keys [line column]} (spoon/source-location resource)
+                            owner (or (enclosing-executable-element element)
+                                      (.getParent element CtType))
+                            used (set (when owner
+                                        (map #(.getSimpleName ^spoon.reflect.declaration.CtNamedElement %)
+                                             (.getElements owner (TypeFilter. spoon.reflect.declaration.CtNamedElement)))))
+                            fresh (fn [stem]
+                                    (first (remove used
+                                                   (map #(str stem "_" line "_" column "_" %)
+                                                        (range)))))
+                            primary (fresh "__dripsharpPrimary")
+                            caught (fresh "__dripsharpCaught")
+                            reference? (not (instance? CtLocalVariable resource))
+                            resource-name (if reference? (fresh "__dripsharpResource")
+                                              (local-declaration-name resource))]
+                        (sequence-node
+                         [(raw "{\n")
+                          (when reference? (raw (str "var " resource-name " = ")))
+                          (child-node children resource)
+                          (raw (str ";\nglobal::System.Exception? " primary " = null;\ntry "))
+                          guarded
+                          (raw (str " catch (global::System.Exception " caught ") {\n"
+                                    primary " = " caught ";\nthrow;\n} finally {\n"))
+                          (compat-call "CloseResource" [(raw resource-name) (raw primary)])
+                          (raw ";\n}\n}")])))
                     body
                     (reverse resources)))
                  guarded-body
-                 (if (and using-node (or (seq catches) finalizer))
-                   (sequence-node [(raw "{\n") using-node (raw "\n}")])
-                   (or using-node body))]
+                 (if (and resource-node (or (seq catches) finalizer))
+                   (sequence-node [(raw "{\n") resource-node (raw "\n}")])
+                   (or resource-node body))]
              {:node
               (sequence-node
                [(when (or (empty? resources) (seq catches) finalizer)

@@ -745,7 +745,11 @@ abstract class JavaInputStream : Stream, IDisposable
         var copied = 1;
         while (copied < count)
         {
-            var next = Read();
+            int next;
+            // InputStream's default bulk read treats an IOException after the
+            // first byte as a short read; failure on the first byte propagates.
+            try { next = Read(); }
+            catch (IOException) { break; }
             if (next < 0) break;
             buffer[offset + copied++] = unchecked((sbyte)next);
         }
@@ -1128,7 +1132,7 @@ class JavaFilterOutputStream : JavaOutputStream
     protected readonly Stream @out;
     private bool closed;
 
-    protected JavaFilterOutputStream(Stream output) => @out = output;
+    public JavaFilterOutputStream(Stream output) => @out = output;
     public override bool CanWrite => @out.CanWrite;
     public override void Write(int value) => @out.WriteByte(unchecked((byte)value));
     public override void Write(sbyte[] buffer, int offset, int count) =>
@@ -1139,13 +1143,27 @@ class JavaFilterOutputStream : JavaOutputStream
     {
         if (closed) return;
         closed = true;
+        Exception? flushFailure = null;
         try
         {
             Flush();
         }
+        catch (Exception failure)
+        {
+            flushFailure = failure;
+            throw;
+        }
         finally
         {
-            ((IDisposable)@out).Dispose();
+            try { ((IDisposable)@out).Dispose(); }
+            catch (Exception closeFailure)
+            {
+                // FilterOutputStream gives the close failure precedence over
+                // a flush failure, retaining the latter as suppressed.
+                if (flushFailure is not null && !ReferenceEquals(closeFailure, flushFailure))
+                    JavaCompat.AddSuppressed(closeFailure, flushFailure);
+                throw;
+            }
             base.Dispose();
         }
     }
@@ -1581,10 +1599,14 @@ internal static partial class JavaCompat
     }
     internal static int InputStreamRead(Stream stream) => stream.ReadByte();
     internal static int InputStreamRead(Stream stream, sbyte[] values) =>
-        InputStreamRead(stream, values, 0, values.Length);
+        stream is JavaInputStream java ? java.Read(values) : InputStreamRead(stream, values, 0, values.Length);
     internal static int InputStreamRead(Stream stream, sbyte[] values, int offset, int count)
     {
         ArgumentNullException.ThrowIfNull(stream);
+        // Preserve virtual Java overloads and caller-buffer mutations, including
+        // mutations performed before an override throws. Native Streams still
+        // cross the unsigned-byte boundary below.
+        if (stream is JavaInputStream java) return java.Read(values, offset, count);
         ArgumentNullException.ThrowIfNull(values);
         if (offset < 0 || count < 0 || offset > values.Length - count)
             throw new IndexOutOfRangeException();

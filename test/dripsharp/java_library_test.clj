@@ -4237,8 +4237,7 @@
         (slurp (str (paths/resolve-path (:project-root second)
                                         "src/Example/Java/Library/Resources.cs")))]
     (is (contains-csharp? first-source
-                          (str "using (global::System.IO.Stream resource = stream) {\n"
-                               "return 1;\n}")))
+                          "global::System.IO.Stream resource = stream;"))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
@@ -4247,21 +4246,22 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest multiple-try-resources-emit-nested-using-guards
+(deftest multiple-try-resources-emit-nested-exception-guards
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.io.InputStream; "
                       "public final class Unsupported { static void run(InputStream first, "
                       "InputStream second) throws Exception { "
                       "try (InputStream a = first; InputStream b = second) { } } }")})
-        emission (emit! fixture 1)
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
         source
         (slurp (str (paths/resolve-path (:project-root emission)
                                         "src/Example/Java/Library/Unsupported.cs")))]
     (is (contains-csharp?
          source
-         (str "using (global::System.IO.Stream a = first) "
-              "using (global::System.IO.Stream b = second)")))
+         "global::System.IO.Stream a = first;"))
+    (is (contains-csharp? source "global::System.IO.Stream b = second;"))
+    (is (= 2 (count (re-seq #"JavaCompat.CloseResource" source))))
     (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
