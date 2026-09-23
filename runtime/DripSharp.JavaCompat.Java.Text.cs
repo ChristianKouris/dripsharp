@@ -42,7 +42,7 @@ internal sealed class JavaDecimalFormat
     private bool groupingUsed;
 
     internal JavaDecimalFormat()
-        : this("#,##0.###", CultureInfo.CurrentCulture.NumberFormat) { }
+        : this("#,##0.###", JavaCompat.DecimalFormatSymbols(CultureInfo.CurrentCulture)) { }
 
     internal JavaDecimalFormat(string pattern, NumberFormatInfo format)
     {
@@ -56,7 +56,7 @@ internal sealed class JavaDecimalFormat
     }
 
     internal static JavaDecimalFormat GetNumberInstance(CultureInfo culture) =>
-        new("#,##0.###", culture.NumberFormat);
+        new("#,##0.###", JavaCompat.DecimalFormatSymbols(culture));
 
     private string Pattern =>
         (groupingUsed ? integerPattern : integerPattern.Replace(",", string.Empty, StringComparison.Ordinal)) +
@@ -164,7 +164,11 @@ internal sealed class JavaDecimalFormat
         var result = fraction.Length == 0
             ? integer
             : integer + format.NumberDecimalSeparator + fraction;
-        return negative ? format.NegativeSign + result : result;
+        var localized = new StringBuilder();
+        foreach (var character in result)
+            localized.Append(character >= '0' && character <= '9'
+                ? format.NativeDigits[character - '0'] : character.ToString());
+        return negative ? format.NegativeSign + localized : localized.ToString();
     }
 
     private string GroupInteger(string integer)

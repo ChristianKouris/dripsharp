@@ -91,6 +91,8 @@ internal static class Program
             ParameterInfo[] types = method.GetParameters();
             var values = new object?[types.Length];
             for (int i = 0; i < values.Length; i++) values[i] = Argument(fields[i + 5], types[i].ParameterType);
+            if (fields[0] == "floating") CultureInfo.CurrentCulture = (string)values[0]! == "root"
+                ? CultureInfo.InvariantCulture : CultureInfo.GetCultureInfo((string)values[0]!);
             string exception = "none";
             string result;
             try { result = Observe(method.Invoke(null, values)); }

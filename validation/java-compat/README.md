@@ -382,3 +382,12 @@ bounded list/map/set/deque state machines, including collision keys, live views,
 nulls, equality/hash, defined ordering, and overload-sensitive removal. Its
 combined command feeds the identical saved input to this direct runner and the
 actual translated Java batch. It is opt-in and adds no hosted live workload.
+
+## Floating-point and numeric formatting
+
+The explicit local [floating-point family](../microprograms/floating/README.md)
+compares Java 17 with both direct JavaCompat and translated expressions over the
+same recorded inputs. It covers exact conversion bits/results, parse failures,
+rounding ties, legacy floating text, fixed DecimalFormat patterns, and explicit
+root/German/Arabic locales. It is not enrolled in hosted CI or default live test
+discovery.

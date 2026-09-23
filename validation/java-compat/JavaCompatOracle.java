@@ -334,6 +334,7 @@ public final class JavaCompatOracle {
         throw new IllegalArgumentException("Duplicate case step");
       var operation = fields[0] + "/" + fields[3];
       int arity = switch (operation) {
+        case "floating/run" -> 3;
         case "collections/run" -> 2;
         case "charset/decode", "charset/stream", "charset/string-ops" -> 3;
         case "numeric/int-div", "numeric/int-rem", "numeric/long-div", "numeric/long-rem" -> 2;
@@ -408,6 +409,10 @@ public final class JavaCompatOracle {
       var exception = "none";
       try {
         switch (operation) {
+          case "floating/run" -> {
+            Locale.setDefault(values[0].equals("root") ? Locale.ROOT : Locale.forLanguageTag((String)values[0]));
+            result = stringToken(micro.FloatingCases.run((String)values[0], (String)values[1], (String)values[2]));
+          }
           case "collections/run" -> result = stringToken(micro.CollectionMachine.run(intValue(values[0]), (String) values[1]));
           case "charset/decode" -> result = stringToken(micro.CharsetMachine.decode(
               (String) values[0], intValue(values[1]), (String) values[2]));

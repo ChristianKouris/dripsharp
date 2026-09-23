@@ -41,7 +41,13 @@
        "--replay" "CASE.edn" "--max-processes" "20" "--max-ms" "180000"
        "--shrink-attempts" "0" "--shrink-ms" "1000"]}
      :translated-microprograms
-     {:families {"charset" {:execution :explicit-local-only
+     {:families {"floating" {:execution :explicit-local-only
+                              :generator {:id :floating-boundaries :version 1}
+                              :command ["clojure" "-J-Xmx28g" "-M" "-m" "dripsharp.floating-microprogram"
+                                        "--seed" "73" "--samples" "12"]
+                              :regression-command ["clojure" "-J-Xmx28g" "-M" "-m" "dripsharp.floating-microprogram"
+                                                   "--samples" "0" "--case" "root-round-19"]}
+                 "charset" {:execution :explicit-local-only
                              :generator {:id :charset-boundaries :version 1}
                              :command ["clojure" "-J-Xmx28g" "-M" "-m" "dripsharp.charset-microprogram"
                                        "--seed" "41" "--samples" "12"]

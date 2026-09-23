@@ -5535,8 +5535,9 @@
     (is (contains-csharp?
          source
          (str "new global::DripSharp.Runtime.JavaDecimalFormat(\"00000\", "
+              "global::DripSharp.Runtime.JavaCompat.DecimalFormatSymbols("
               "global::System.Globalization.CultureInfo.GetCultureInfo("
-              "\"en-US\").NumberFormat)")))
+              "\"en-US\")))")))
     (is (contains-csharp?
          source
          (str "global::DripSharp.Runtime.JavaDecimalFormat.GetNumberInstance("
@@ -6554,8 +6555,9 @@
          "global::DripSharp.Runtime.JavaCompat.PathParent(value) != default!"))
     (is (contains-csharp?
          source
-         (str "return (float)(int)(global::System.Convert.ToSingle(value, "
-              "global::System.Globalization.CultureInfo.InvariantCulture));")))
+         (str "global::DripSharp.Runtime.JavaCompat.NumberIntValue("
+              "global::System.Convert.ToSingle(value, "
+              "global::System.Globalization.CultureInfo.InvariantCulture))")))
     (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)

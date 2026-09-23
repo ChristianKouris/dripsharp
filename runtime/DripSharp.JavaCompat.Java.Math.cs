@@ -1109,11 +1109,11 @@ internal static partial class JavaCompat
     internal static long MathRound(double value) => double.IsNaN(value) ? 0
         : value >= long.MaxValue ? long.MaxValue
         : value <= long.MinValue ? long.MinValue
-        : (long)Math.Floor(value + 0.5d);
+        : (long)Math.Floor(value) + (value - Math.Floor(value) >= 0.5d ? 1L : 0L);
     internal static int MathRoundFloat(float value) => float.IsNaN(value) ? 0
         : value >= int.MaxValue ? int.MaxValue
         : value <= int.MinValue ? int.MinValue
-        : (int)Math.Floor(value + 0.5f);
+        : (int)Math.Floor(value) + ((double)value - Math.Floor(value) >= 0.5d ? 1 : 0);
     internal static int FloorDiv(int left, int right)
     {
         if (left == int.MinValue && right == -1) return int.MinValue;

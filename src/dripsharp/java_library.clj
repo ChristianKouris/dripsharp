@@ -1859,6 +1859,14 @@
                  (sequence-node [(type-node ctx cast) (raw "?")])
                  inner)
 
+                (and (contains? #{"float" "double"} (some-> expression .getType .getQualifiedName))
+                     (contains? #{"byte" "short" "char" "int" "long"} qualified-name))
+                (sequence-node
+                 [(raw "unchecked((") (type-node ctx cast)
+                  (raw ")(global::DripSharp.Runtime.JavaCompat.")
+                  (raw (if (= qualified-name "long") "NumberLongValue" "NumberIntValue"))
+                  (raw "(") inner (raw ")))")])
+
                 (contains? #{"byte" "short" "char"} qualified-name)
                 (sequence-node
                  [(raw "unchecked((") (type-node ctx cast)
@@ -3566,7 +3574,7 @@
      [{:keys [target-node arguments]}]
      {:node (sequence-node [target-node (raw ".Init(") (sequence-node arguments ", ") (raw ")")])}),
    :java-library.mapping.executable/handler-0183
-   (fn [{:keys [arguments]}] {:node (sequence-node [(first arguments) (raw ".NumberFormat")])}),
+   (fn [{:keys [arguments]}] {:node (compat-call "DecimalFormatSymbols" arguments)}),
    :java-library.mapping.executable/handler-0669
    (fn
      [{:keys [target-node arguments]}]
@@ -3941,13 +3949,7 @@
    :java-library.mapping.executable/handler-0063
    (fn [{:keys [arguments]}] {:node (compat-call "IsValidCodePoint" arguments)}),
    :java-library.mapping.executable/handler-0122
-   (fn
-     [{:keys [target-node]}]
-     {:node
-      (sequence-node
-       [(raw "global::System.Convert.ToInt64(")
-        target-node
-        (raw ", global::System.Globalization.CultureInfo.InvariantCulture)")])}),
+   (fn [{:keys [target-node]}] {:node (compat-call "NumberLongValue" [target-node])}),
    :java-library.mapping.executable/handler-0626
    (fn
      [{:keys [arguments element]}]

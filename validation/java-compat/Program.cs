@@ -396,6 +396,7 @@ internal static class Program
                 var operation = fields[0] + "/" + fields[3];
                 var arity = operation switch
                 {
+                    "floating/run" => 3,
                     "collections/run" => 2,
                     "charset/decode" or "charset/stream" or "charset/string-ops" => 3,
                     "numeric/int-div" or "numeric/int-rem" or "numeric/long-div" or "numeric/long-rem" => 2,
@@ -487,6 +488,7 @@ internal static class Program
                 {
                     switch (operation)
                     {
+                        case "floating/run": result = StringToken(FloatingProbe.Run((string)values[0]!, (string)values[1]!, (string)values[2]!)); break;
                         case "collections/run": result = StringToken(CollectionProbe.Run(IntValue(values[0]), (string)values[1]!)); break;
                         case "charset/decode": result = StringToken(CharsetProbe.Decode(
                             (string)values[0]!, IntValue(values[1]), (string)values[2]!)); break;

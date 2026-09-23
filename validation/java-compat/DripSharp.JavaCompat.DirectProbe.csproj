@@ -16,5 +16,6 @@
     <Compile Include="Program.cs" />
     <Compile Include="CollectionProbe.cs" />
     <Compile Include="CharsetProbe.cs" />
+    <Compile Include="FloatingProbe.cs" />
   </ItemGroup>
 </Project>

@@ -1,0 +1,8 @@
+{:schema-version 1 :id "floating"
+ :generator {:id :floating-boundaries :version 1 :seed nil}
+ :sources ["subjects/micro/FloatingCases.java"]
+ :configuration "../destination.edn" :input "cases.tsv"
+ :java-observer "../MicroObserver.java" :dotnet-observer "../Program.cs"
+ :operations {"run" {:java-type "micro.FloatingCases" :java-method "run"
+                     :dotnet-type "DripSharp.Microprograms.FloatingCases" :dotnet-method "Run"
+                     :parameters ["string" "string" "string"]}}}

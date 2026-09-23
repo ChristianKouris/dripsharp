@@ -341,7 +341,8 @@
                  "-d" (str classes)
                  (str oracle-source)
                  (str (paths/resolve-path root "validation/microprograms/collections/subjects/micro/CollectionMachine.java"))
-                 (str (paths/resolve-path root "validation/microprograms/charset/subjects/micro/CharsetMachine.java"))]})
+                 (str (paths/resolve-path root "validation/microprograms/charset/subjects/micro/CharsetMachine.java"))
+                 (str (paths/resolve-path root "validation/microprograms/floating/subjects/micro/FloatingCases.java"))]})
      (run-command!
       {:directory root
        :timeout-ms (get-in contract [:oracle :run-timeout-ms])
@@ -409,7 +410,8 @@
 
 (def case-families
   "Local-only concrete operation contracts. Registration launches no processes."
-  {"collections" {"run" {:arguments [#{"i"} #{"u"}] :exceptions #{"none"}}}
+  {"floating" {"run" {:arguments [#{"u"} #{"u"} #{"u"}] :exceptions #{"none" "illegal-argument"}}}
+   "collections" {"run" {:arguments [#{"i"} #{"u"}] :exceptions #{"none"}}}
    "charset" {"decode" {:arguments [#{"u"} #{"i"} #{"u"}]
                           :exceptions #{"none"}}
               "stream" {:arguments [#{"u"} #{"u"} #{"u"}]
@@ -604,7 +606,8 @@
                     [javac "--release" (:java-release contract) "-encoding" "UTF-8"
                      "-d" classes (configured-path root (get-in contract [:oracle :source]))
                      (paths/resolve-path root "validation/microprograms/collections/subjects/micro/CollectionMachine.java")
-                     (paths/resolve-path root "validation/microprograms/charset/subjects/micro/CharsetMachine.java")])
+                     (paths/resolve-path root "validation/microprograms/charset/subjects/micro/CharsetMachine.java")
+                     (paths/resolve-path root "validation/microprograms/floating/subjects/micro/FloatingCases.java")])
         _ (command! :dotnet-build (get-in contract [:probe :build-timeout-ms])
                     ["dotnet" "build" project "--nologo" "--configuration" "Release"
                      "--verbosity:minimal" "-warnaserror" "--output" binaries])

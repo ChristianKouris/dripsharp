@@ -81,6 +81,8 @@ public final class MicroObserver {
                 Class<?>[] types = method.getParameterTypes();
                 Object[] values = new Object[types.length];
                 for (int i = 0; i < types.length; i++) values[i] = argument(fields[i + 5], types[i]);
+                if (fields[0].equals("floating")) java.util.Locale.setDefault(
+                    values[0].equals("root") ? java.util.Locale.ROOT : java.util.Locale.forLanguageTag((String)values[0]));
                 String exception = "none";
                 String result;
                 try {

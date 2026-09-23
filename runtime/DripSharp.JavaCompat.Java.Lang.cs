@@ -574,6 +574,32 @@ internal static partial class JavaCompat
         value <= int.MinValue ? int.MinValue :
         (int)value;
 
+    internal static NumberFormatInfo DecimalFormatSymbols(CultureInfo culture)
+    {
+        var symbols = (NumberFormatInfo)culture.NumberFormat.Clone();
+        symbols.PositiveInfinitySymbol = "∞";
+        // Java 17 CLDR's neutral Arabic uses Arabic-Indic digits. .NET's
+        // neutral Arabic locale uses Latin digits on some ICU releases.
+        if (culture.Name == "ar")
+        {
+            symbols.NumberDecimalSeparator = "\u066b";
+            symbols.NumberGroupSeparator = "\u066c";
+            symbols.NegativeSign = "\u061c-";
+            symbols.NaNSymbol = "ليس\u00a0رقم";
+            symbols.NativeDigits = new[] { "٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩" };
+        }
+        return symbols;
+    }
+
+    internal static long NumberLongValue(IConvertible value) => value switch
+    {
+        float number => float.IsNaN(number) ? 0 : number >= long.MaxValue ? long.MaxValue
+            : number <= long.MinValue ? long.MinValue : (long)number,
+        double number => double.IsNaN(number) ? 0 : number >= long.MaxValue ? long.MaxValue
+            : number <= long.MinValue ? long.MinValue : (long)number,
+        _ => value.ToInt64(CultureInfo.InvariantCulture)
+    };
+
     internal static int NumberIntValue(IConvertible value) => value switch
     {
         float number => NarrowToInt(number),
@@ -922,7 +948,63 @@ internal static partial class JavaCompat
         if (float.IsNegativeInfinity(value)) return "-Infinity";
         if (value == 0)
             return BitConverter.ToInt32(BitConverter.GetBytes(value), 0) < 0 ? "-0.0" : "0.0";
-        return JavaFiniteFloatingString(value.ToString("R", CultureInfo.InvariantCulture), Math.Abs((double)value));
+        return JavaFloatDigits(value);
+    }
+
+    // Java 17's decimal interval is strict and symmetric; at exact powers
+    // of two it uses the closer predecessor's spacing on both sides. The
+    // integral fast path also retains digits that modern shortest printers omit.
+    // Use exact rational arithmetic so these decisions do not depend on libm.
+    private static string JavaFloatDigits(float value)
+    {
+        var magnitude = Math.Abs((double)value);
+        var bits = unchecked((uint)BitConverter.ToInt32(BitConverter.GetBytes(value), 0)) & 0x7fffffffU;
+        var encodedExponent = (int)(bits >> 23);
+        var significand = bits & 0x7fffffU;
+        if (encodedExponent != 0) significand |= 1U << 23;
+        var exponent = encodedExponent == 0 ? -149 : encodedExponent - 127 - 23;
+        var length = 0;
+        for (var n = significand; n != 0; n >>= 1) length++;
+        var top = exponent + length - 1;
+        var precision = encodedExponent == 0 ? length : 24;
+        var numerator = new BigInteger(significand);
+        var denominator = BigInteger.One;
+        if (exponent >= 0) numerator <<= exponent; else denominator <<= -exponent;
+        if (top <= 62 && numerator % denominator == 0)
+        {
+            var integer = numerator / denominator;
+            var discardBits = top - precision - 1;
+            var decimalPlaces = discardBits > 1
+                ? (BigInteger.One << discardBits).ToString(CultureInfo.InvariantCulture).Length - 1 : 0;
+            var divisor = BigInteger.Pow(10, decimalPlaces);
+            var coefficient = BigInteger.DivRem(integer, divisor, out var remainder);
+            if (remainder * 2 >= divisor) coefficient++;
+            var text = coefficient.ToString(CultureInfo.InvariantCulture) + "E" + decimalPlaces.ToString(CultureInfo.InvariantCulture);
+            return JavaFiniteFloatingString(value < 0 ? "-" + text : text, magnitude);
+        }
+        // Half an ulp, narrowed to a quarter at a power-of-two boundary.
+        var marginExponent = top - precision - ((significand & (significand - 1)) == 0 ? 1 : 0);
+        var marginNumerator = BigInteger.One;
+        var marginDenominator = BigInteger.One;
+        if (marginExponent >= 0) marginNumerator <<= marginExponent; else marginDenominator <<= -marginExponent;
+        var decimalExponent = (int)Math.Floor(Math.Log10(magnitude));
+        for (var digits = 1; digits <= 12; digits++)
+        {
+            var scale = digits - 1 - decimalExponent;
+            var n = numerator * (scale > 0 ? BigInteger.Pow(10, scale) : BigInteger.One);
+            var d = denominator * (scale < 0 ? BigInteger.Pow(10, -scale) : BigInteger.One);
+            var coefficient = BigInteger.DivRem(n, d, out var remainder);
+            var compare = (remainder * 2).CompareTo(d);
+            if (compare > 0 || (compare == 0 && !coefficient.IsEven)) coefficient++;
+            var distance = BigInteger.Abs(coefficient * d - n);
+            var scaledMargin = marginNumerator * (scale > 0 ? BigInteger.Pow(10, scale) : BigInteger.One);
+            var scaledMarginDenominator = marginDenominator * (scale < 0 ? BigInteger.Pow(10, -scale) : BigInteger.One);
+            if (distance * scaledMarginDenominator >= scaledMargin * d) continue;
+            if (digits == 1 && (decimalExponent < -3 || decimalExponent >= 8)) continue;
+            var text = coefficient.ToString(CultureInfo.InvariantCulture) + "E" + (-scale).ToString(CultureInfo.InvariantCulture);
+            return JavaFiniteFloatingString(value < 0 ? "-" + text : text, magnitude);
+        }
+        throw new InvalidOperationException("Unable to format a finite float.");
     }
 
     private static string JavaFiniteFloatingString(string text, double magnitude)
@@ -1126,27 +1208,82 @@ internal static partial class JavaCompat
         if (!negative) return (long)magnitude;
         return magnitude == negativeLimit ? minimum : -(long)magnitude;
     }
+    // Java accepts ASCII trim, decimal/hex literals and optional type suffixes,
+    // but never locale grouping, localized digits, or case-insensitive specials.
+    private static string FloatingLiteral(string value)
+    {
+        if (value is null) throw new NullReferenceException();
+        var start = 0;
+        var end = value.Length;
+        while (start < end && value[start] <= ' ') start++;
+        while (end > start && value[end - 1] <= ' ') end--;
+        var text = value.Substring(start, end - start);
+        if (Regex.IsMatch(text, @"\A[+-]?(?:NaN|Infinity)\z")) return text;
+        if (!Regex.IsMatch(text, @"\A[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|0[xX](?:[0-9a-fA-F]+(?:\.[0-9a-fA-F]*)?|\.[0-9a-fA-F]+)[pP][+-]?[0-9]+)[fFdD]?\z"))
+            throw new JavaNumberFormatException("Invalid floating-point literal.");
+        return text.Length > 0 && "fFdD".IndexOf(text[text.Length - 1]) >= 0
+            ? text.Substring(0, text.Length - 1) : text;
+    }
+
+    private static ulong HexFloatingBits(string text, int precision, int minimumExponent, int maximumExponent)
+    {
+        var negative = text[0] == '-';
+        var sign = negative ? 1UL << (precision == 53 ? 63 : 31) : 0UL;
+        var begin = text[0] == '+' || negative ? 3 : 2;
+        var p = text.IndexOfAny(new[] { 'p', 'P' });
+        var significand = BigInteger.Zero;
+        var fractionDigits = 0;
+        var fraction = false;
+        for (var i = begin; i < p; i++)
+        {
+            if (text[i] == '.') { fraction = true; continue; }
+            var c = char.ToLowerInvariant(text[i]);
+            significand = (significand << 4) + (c <= '9' ? c - '0' : c - 'a' + 10);
+            if (fraction) fractionDigits++;
+        }
+        if (significand.IsZero) return sign;
+        var exponent = BigInteger.Parse(text.Substring(p + 1), CultureInfo.InvariantCulture) - 4 * fractionDigits;
+        var length = 0;
+        for (var n = significand; n > 0; n >>= 1) length++;
+        var top = exponent + length - 1;
+        var infinity = precision == 53 ? 0x7ff0000000000000UL : 0x7f800000UL;
+        if (top > maximumExponent) return sign | infinity;
+        if (top < minimumExponent - precision) return sign;
+        var unitExponent = Math.Max((int)top, minimumExponent) - (precision - 1);
+        var shift = unitExponent - (int)exponent;
+        BigInteger rounded;
+        if (shift <= 0) rounded = significand << -shift;
+        else
+        {
+            rounded = significand >> shift;
+            var remainder = significand - (rounded << shift);
+            var half = BigInteger.One << (shift - 1);
+            if (remainder > half || (remainder == half && !rounded.IsEven)) rounded++;
+        }
+        if (rounded >= (BigInteger.One << precision)) { rounded >>= 1; unitExponent++; }
+        var implicitBit = 1UL << (precision - 1);
+        var mantissa = (ulong)rounded;
+        if (mantissa < implicitBit) return sign | mantissa;
+        var encodedExponent = unitExponent + precision - 1 - minimumExponent + 1;
+        if (encodedExponent >= (precision == 53 ? 2047 : 255)) return sign | infinity;
+        return sign | ((ulong)encodedExponent << (precision - 1)) | (mantissa - implicitBit);
+    }
+
     internal static double ParseDouble(string value)
     {
-        try
-        {
-            return double.Parse(value, CultureInfo.InvariantCulture);
-        }
-        catch (Exception error) when (error is FormatException or OverflowException)
-        {
-            throw new JavaNumberFormatException(error.Message, error);
-        }
+        var text = FloatingLiteral(value);
+        if (text.EndsWith("NaN", StringComparison.Ordinal)) return double.NaN;
+        if (text.IndexOf("0x", StringComparison.OrdinalIgnoreCase) >= 0)
+            return BitConverter.Int64BitsToDouble(unchecked((long)HexFloatingBits(text, 53, -1022, 1023)));
+        return double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture);
     }
     internal static float ParseFloat(string value)
     {
-        try
-        {
-            return float.Parse(value, CultureInfo.InvariantCulture);
-        }
-        catch (Exception error) when (error is FormatException or OverflowException)
-        {
-            throw new JavaNumberFormatException(error.Message, error);
-        }
+        var text = FloatingLiteral(value);
+        if (text.EndsWith("NaN", StringComparison.Ordinal)) return float.NaN;
+        if (text.IndexOf("0x", StringComparison.OrdinalIgnoreCase) >= 0)
+            return BitConverter.ToSingle(BitConverter.GetBytes(unchecked((uint)HexFloatingBits(text, 24, -126, 127))), 0);
+        return float.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture);
     }
     internal static int CompareLong(long left, long right) => left.CompareTo(right);
     internal static int CompareInt(int left, int right) => left.CompareTo(right);
