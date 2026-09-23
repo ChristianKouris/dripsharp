@@ -1,0 +1,10 @@
+{:version 1
+ :seed 1003
+ :template :set-form-value-save-reopen
+ :resources [{:id "r0" :value "shared 😀"}]
+ :pages [{:id "p0" :resource "r0" :width 300 :height 400 :rotation 0 :content "%page-p0-form\n"}
+         {:id "p1" :resource "r0" :width 400 :height 300 :rotation 270 :content "%page-p1-form\n"}
+         {:id "p2" :resource "r0" :width 260 :height 260 :rotation 90 :content "%page-p2-form\n"}]
+ :fields [{:id "text-field" :type :text :page "p0" :initial "before" :value "after café"}
+          {:id "check-field" :type :checkbox :page "p1" :initial false :value true}]
+ :selection ["p0" "p1" "p2"]}

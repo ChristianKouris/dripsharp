@@ -1,0 +1,11 @@
+{:version 1
+ :seed 1002
+ :template :import-and-reorder
+ :resources [{:id "r0" :value "shared"}
+             {:id "r1" :value "second 漢"}]
+ :pages [{:id "p0" :resource "r0" :width 220 :height 300 :rotation 0 :content "%page-p0-import\n"}
+         {:id "p1" :resource "r1" :width 360 :height 260 :rotation 180 :content "%page-p1-import\n"}
+         {:id "p2" :resource "r0" :width 420 :height 210 :rotation 90 :content "%page-p2-import\n"}]
+ :fields [{:id "text-field" :type :text :page "p0" :initial "source" :value "changed"}
+          {:id "check-field" :type :checkbox :page "p1" :initial true :value false}]
+ :selection ["p2" "p0"]}

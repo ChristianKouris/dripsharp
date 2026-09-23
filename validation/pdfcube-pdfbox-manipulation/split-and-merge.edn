@@ -1,0 +1,10 @@
+{:version 1
+ :seed 1001
+ :template :split-and-merge
+ :resources [{:id "r0" :value "shared café"}]
+ :pages [{:id "p0" :resource "r0" :width 240 :height 320 :rotation 0 :content "%page-p0-fixed\n"}
+         {:id "p1" :resource "r0" :width 320 :height 240 :rotation 90 :content "%page-p1-fixed\n"}
+         {:id "p2" :resource "r0" :width 280 :height 360 :rotation 270 :content "%page-p2-fixed\n"}]
+ :fields [{:id "text-field" :type :text :page "p0" :initial "before" :value "after café"}
+          {:id "check-field" :type :checkbox :page "p1" :initial false :value true}]
+ :selection ["p2" "p0" "p1"]}
