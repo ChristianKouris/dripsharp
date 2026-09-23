@@ -3508,7 +3508,10 @@
 (defn-
   executable-mapping-handlers
   [ctx-holder]
-  {:java-library.mapping/supplemental-collection-factory
+  {:java-library.mapping.executable/regex-matcher-reset
+   (fn [{:keys [target-node]}]
+     {:node (sequence-node [target-node (raw ".Reset()")])})
+   :java-library.mapping/supplemental-collection-factory
    (fn
      [{:keys [element occurrence target-node arguments]}]
      {:node

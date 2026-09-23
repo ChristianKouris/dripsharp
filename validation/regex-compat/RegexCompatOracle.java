@@ -7,6 +7,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 public final class RegexCompatOracle {
   private static final String NULL = "~";
@@ -30,7 +31,8 @@ public final class RegexCompatOracle {
               decode(fields[5]));
           output.append(id).append("\tOK\t").append(encode(result)).append('\n');
         } catch (RuntimeException error) {
-          output.append(id).append("\tERROR\t").append(encode("error")).append('\n');
+          output.append(id).append("\tERROR\t")
+              .append(encode("failure|" + fields[1] + "|" + category(error))).append('\n');
         }
       }
     }
@@ -52,6 +54,7 @@ public final class RegexCompatOracle {
       case "MATCHES" -> Boolean.toString(matcher.matches());
       case "LOOKING_AT" -> Boolean.toString(matcher.lookingAt());
       case "FIND" -> allMatches(matcher);
+      case "SEQUENCE" -> sequence(matcher, argument);
       case "REGION" -> region(matcher, argument);
       case "SPLIT" -> sequence(pattern.split(input, Integer.parseInt(argument)));
       case "REPLACE_ALL" -> matcher.replaceAll(argument);
@@ -69,6 +72,35 @@ public final class RegexCompatOracle {
     var matches = new ArrayList<String>();
     while (matcher.find()) matches.add(match(matcher));
     return sequence(matches.toArray(String[]::new));
+  }
+
+  private static String sequence(Matcher matcher, String argument) {
+    var observations = new ArrayList<String>();
+    for (String step : argument.split(";", -1)) {
+      if (step.equals("find")) {
+        boolean success = matcher.find();
+        observations.add(step + "=" + success + ":" + (success ? match(matcher) : NULL));
+      } else if (step.startsWith("findAt=")) {
+        boolean success = matcher.find(Integer.parseInt(step.substring(7)));
+        observations.add(step + "=" + success + ":" + (success ? match(matcher) : NULL));
+      } else if (step.equals("matches")) {
+        boolean success = matcher.matches();
+        observations.add(step + "=" + success + ":" + (success ? match(matcher) : NULL));
+      } else if (step.equals("lookingAt")) {
+        boolean success = matcher.lookingAt();
+        observations.add(step + "=" + success + ":" + (success ? match(matcher) : NULL));
+      } else if (step.equals("reset")) {
+        matcher.reset();
+        observations.add(step + "=ready");
+      } else if (step.startsWith("region=")) {
+        String[] bounds = step.substring(7).split(":", -1);
+        matcher.region(Integer.parseInt(bounds[0]), Integer.parseInt(bounds[1]));
+        observations.add(step + "=ready");
+      } else {
+        throw new IllegalArgumentException("unknown sequence step: " + step);
+      }
+    }
+    return observations.size() + ":" + String.join("|", observations);
   }
 
   private static String region(Matcher matcher, String argument) {
@@ -148,6 +180,14 @@ public final class RegexCompatOracle {
     var encoded = new ArrayList<String>(values.length);
     for (String value : values) encoded.add(encode(value));
     return values.length + ":" + String.join(",", encoded);
+  }
+
+  private static String category(RuntimeException error) {
+    if (error instanceof PatternSyntaxException) return "pattern-syntax";
+    if (error instanceof IndexOutOfBoundsException) return "index-out-of-bounds";
+    if (error instanceof IllegalStateException) return "illegal-state";
+    if (error instanceof IllegalArgumentException) return "illegal-argument";
+    return "runtime";
   }
 
   private static String decode(String value) {

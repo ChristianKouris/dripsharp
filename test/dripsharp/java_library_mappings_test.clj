@@ -82,10 +82,14 @@
         output-buffer
         (mapping-registry/registry-entry
          registry
-         "field:java.io.ByteArrayOutputStream#buf")]
+         "field:java.io.ByteArrayOutputStream#buf")
+        regex-reset
+        (mapping-registry/registry-entry
+         registry
+         "executable:java.util.regex.Matcher#reset()")]
     (is (mapping-registry/compiled-registry? registry))
-    (is (= 1794 (count library-mappings/entries)))
-    (is (= 1442 (count library-mappings/executable-keys)))
+    (is (= 1795 (count library-mappings/entries)))
+    (is (= 1443 (count library-mappings/executable-keys)))
     (is (= 192 (count library-mappings/constructor-keys)))
     (is (= 160 (count library-mappings/field-entries)))
     (is (= :compat-call (:strategy list-size)))
@@ -93,6 +97,9 @@
     (is (= :java-library.mapping/stream-collect (:handler stream-collect)))
     (is (= :custom-handler (:strategy atomic-get)))
     (is (= :java-library.mapping/atomic-reference-get (:handler atomic-get)))
+    (is (= :custom-handler (:strategy regex-reset)))
+    (is (= :java-library.mapping.executable/regex-matcher-reset
+           (:handler regex-reset)))
     (is (= :template (:strategy file-separator)))
     (is (= :custom-handler (:strategy output-buffer)))
     (is (= :java-library.mapping/byte-array-output-stream-buffer

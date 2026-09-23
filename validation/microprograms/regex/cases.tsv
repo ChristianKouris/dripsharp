@@ -1,0 +1,11 @@
+DRIPSHARP_DIFFERENTIAL_CASES_V1
+regex-translated	capture-reset	0	sequence	none	u:002800610029003f00280062002a0029	i:0	u:006100620020006100620062	u:	i:0
+regex-translated	zero-width-astral	0	sequence	none	u:	i:0	u:d83dde000061	u:	i:0
+regex-translated	region-reset	0	sequence	none	u:005e00620024	i:0	u:006100620063	u:	i:1
+regex-translated	unicode-class	0	sequence	none	u:005c0077002b	i:256	u:00630061006600e9	u:	i:0
+regex-translated	split-limit	0	sequence	none	u:003a	i:0	u:0062006f006f003a0061006e0064003a0066006f006f	u:0032	i:2
+regex-translated	replace-groups	0	sequence	none	u:002800610029002800620029	i:0	u:00610062007800610062	u:0024003200240031	i:3
+regex-translated	replace-escaping	0	sequence	none	u:0061	i:0	u:0061	u:005c0024005c005c	i:3
+regex-translated	invalid-pattern	0	sequence	none	u:005b	i:0	u:0061	u:	i:0
+regex-translated	invalid-replacement	0	sequence	none	u:002800610029	i:0	u:0061	u:0024007b006d0069007300730069006e0067007d	i:3
+regex-translated	quote-replacement	0	sequence	none	u:0061	i:0	u:	u:00610024005c0062	i:4

@@ -134,6 +134,17 @@ sealed class JavaRegexMatcher
         }
         return Accept(match, regionStart);
     }
+    internal JavaRegexMatcher Reset()
+    {
+        regionStart = 0;
+        regionEnd = input.Length;
+        nextIndex = 0;
+        appendIndex = 0;
+        current = null;
+        currentOffset = 0;
+        currentBoundaryMap = null;
+        return this;
+    }
     internal JavaRegexMatcher Region(int start, int end)
     {
         if (start < 0 || start > input.Length) throw new ArgumentOutOfRangeException(nameof(start));

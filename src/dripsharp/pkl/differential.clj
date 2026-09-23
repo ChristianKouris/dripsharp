@@ -13,6 +13,7 @@
             [dripsharp.project-input :as project-input]
             [dripsharp.pkl.parser-test-contract :as parser-test-contract]
             [dripsharp.pkl.public-api-contract :as public-api-contract]
+            [dripsharp.regex-differential :as regex-differential]
             [dripsharp.util :as util])
   (:import [java.io ByteArrayInputStream File]
            [java.nio.charset StandardCharsets]
@@ -101,151 +102,6 @@
   (into [] (concat float-fraction-digit-cases
                    integer-fraction-digit-cases
                    to-fixed-edge-cases)))
-
-(def ^:private regex-compat-cases
-  [;; Pattern text, flags, quoting, literal escapes, and compile failures.
-   ["regex/pattern/default-flags" "PATTERN" 0 "a(b)" "" ""]
-   ["regex/pattern/unicode-implies-unicode-case" "PATTERN" 256 "a" "" ""]
-   ["regex/pattern/all-flags" "PATTERN" 511 "a" "" ""]
-   ["regex/pattern/unknown-flag" "PATTERN" 512 "a" "" ""]
-   ["regex/quote/metacharacters" "QUOTE_PATTERN" 0 ".a[0]" ".a[0]" ""]
-   ["regex/quote/embedded-end-marker" "QUOTE_PATTERN" 0 "a\\Eb" "a\\Eb" ""]
-   ["regex/quote/direct-qe" "MATCHES" 0 "\\Q.a[0]\\E" ".a[0]" ""]
-   ["regex/escape/octal" "MATCHES" 0 "\\0141" "a" ""]
-   ["regex/escape/hex" "MATCHES" 0 "\\x61\\u0062" "ab" ""]
-   ["regex/escape/codepoint" "MATCHES" 0 "\\x{1F600}" "😀" ""]
-   ["regex/escape/unicode-name" "MATCHES" 0 "\\N{GREEK CAPITAL LETTER OMEGA}" "Ω" ""]
-   ["regex/escape/unicode-name-table" "MATCHES" 0 "\\N{PILE OF POO}" "💩" ""]
-   ["regex/escape/unicode-name-hangul" "MATCHES" 0 "\\N{HANGUL SYLLABLES AC00}" "가" ""]
-   ["regex/escape/unicode-name-cjk" "MATCHES" 0 "\\N{CJK UNIFIED IDEOGRAPHS 4E00}" "一" ""]
-   ["regex/escape/unicode-name-private" "MATCHES" 0 "\\N{PRIVATE USE AREA E000}" "" ""]
-   ["regex/escape/control" "MATCHES" 0 "\\cJ" "\n" ""]
-   ["regex/syntax/dangling" "MATCHES" 0 "*" "" ""]
-   ["regex/syntax/unknown-escape" "MATCHES" 0 "\\y" "y" ""]
-
-   ;; Compile flags and their inline equivalents.
-   ["regex/flags/ascii-case" "MATCHES" 2 "Ä" "ä" ""]
-   ["regex/flags/ascii-case-class" "MATCHES" 2 "[a-z]+" "ABC" ""]
-   ["regex/flags/ascii-case-negated-class" "MATCHES" 2 "[^a]" "A" ""]
-   ["regex/flags/ascii-case-literal" "MATCHES" 18 "a.+" "A.+" ""]
-   ["regex/flags/unicode-case" "MATCHES" 66 "Ä" "ä" ""]
-   ["regex/flags/unicode-case-class" "MATCHES" 66 "[α]+" "Α" ""]
-   ["regex/flags/literal" "MATCHES" 16 ".+" ".+" ""]
-   ["regex/flags/comments" "MATCHES" 4 "a # comment\n b" "ab" ""]
-   ["regex/flags/comments-class" "MATCHES" 4 "[ a ]" "a" ""]
-   ["regex/flags/unix-lines-dot" "MATCHES" 1 "." "\r" ""]
-   ["regex/flags/dotall" "MATCHES" 32 ".+" "a\nb" ""]
-   ["regex/flags/multiline-cr" "FIND" 8 "^b$" "a\rb" ""]
-   ["regex/flags/unix-lines-cr" "FIND" 9 "^b$" "a\rb" ""]
-   ["regex/flags/canonical-equivalence" "MATCHES" 128 "å" "å" ""]
-   ["regex/flags/inline-enable-disable" "MATCHES" 0 "(?i:a)(?-i:b)" "Ab" ""]
-   ["regex/flags/scoped-unicode-class" "MATCHES" 0 "(?U:\\w+)" "café" ""]
-
-   ;; Character classes, properties, astral code points, and class algebra.
-   ["regex/class/default-ascii-word" "MATCHES" 0 "\\w+" "café" ""]
-   ["regex/class/unicode-word" "MATCHES" 256 "\\w+" "café" ""]
-   ["regex/class/default-ascii-digit" "MATCHES" 0 "\\d" "٣" ""]
-   ["regex/class/unicode-digit" "MATCHES" 256 "\\d" "٣" ""]
-   ["regex/class/horizontal" "MATCHES" 0 "\\h+" " \t" ""]
-   ["regex/class/vertical" "MATCHES" 0 "\\v+" "\n " ""]
-   ["regex/class/union" "MATCHES" 0 "[a-d[m-p]]+" "camp" ""]
-   ["regex/class/intersection" "MATCHES" 0 "[a-z&&[def]]+" "feed" ""]
-   ["regex/class/subtraction" "MATCHES" 0 "[a-z&&[^m-p]]+" "lazy" ""]
-   ["regex/class/nested-subtraction" "MATCHES" 0 "[[^/]&&[^\\p{Alnum}+.-]]" "_" ""]
-   ["regex/class/astral-literal" "MATCHES" 0 "[😀😈]+" "😀😈" ""]
-   ["regex/class/astral-negation" "MATCHES" 0 "[^😀]+" "😈" ""]
-   ["regex/class/octal-escape" "MATCHES" 0 "[\\0141]" "a" ""]
-   ["regex/class/unicode-escape-range" "MATCHES" 0 "[\\u0061-\\u0063]+" "abc" ""]
-   ["regex/class/codepoint-escape" "MATCHES" 0 "[\\x{1F600}]" "😀" ""]
-   ["regex/class/unicode-name" "MATCHES" 0 "[\\N{PILE OF POO}]" "💩" ""]
-   ["regex/class/quoted" "MATCHES" 0 "[\\Q.+-\\E]+" ".+-" ""]
-   ["regex/property/posix-ascii" "MATCHES" 0 "\\p{Lower}+" "abc" ""]
-   ["regex/property/posix-unicode" "MATCHES" 256 "\\p{Lower}+" "é" ""]
-   ["regex/property/posix-ascii-case" "MATCHES" 2 "\\p{Lower}+" "ABC" ""]
-   ["regex/property/posix-unicode-case" "MATCHES" 258 "\\p{Lower}+" "É" ""]
-   ["regex/property/java-whitespace" "MATCHES" 0 "\\p{javaWhitespace}" " " ""]
-   ["regex/property/java-identifier" "MATCHES" 0 "\\p{javaJavaIdentifierStart}" "$" ""]
-   ["regex/property/java-ideographic" "MATCHES" 0 "\\p{javaIdeographic}" "一" ""]
-   ["regex/property/block" "MATCHES" 0 "\\p{InGreek}+" "Ω" ""]
-   ["regex/property/block-equality" "MATCHES" 0 "\\p{blk=Emoticons}" "😀" ""]
-   ["regex/property/script" "MATCHES" 0 "\\p{IsLatin}+" "é" ""]
-   ["regex/property/script-equality" "MATCHES" 0 "\\p{script=Gothic}" "𐌰" ""]
-   ["regex/property/script-iso-alias" "MATCHES" 0 "\\p{sc=Latn}+" "é" ""]
-   ["regex/property/category" "MATCHES" 0 "\\p{Lu}+" "ΩA" ""]
-   ["regex/property/category-equality" "MATCHES" 0 "\\p{gc=No}" "½" ""]
-   ["regex/property/category-format" "MATCHES" 0 "\\p{Cf}" "‍" ""]
-   ["regex/property/category-private" "MATCHES" 0 "\\p{Co}" "" ""]
-   ["regex/property/category-quote" "MATCHES" 0 "\\p{Pi}" "“" ""]
-   ["regex/property/category-symbol" "MATCHES" 0 "\\p{Sm}" "+" ""]
-   ["regex/property/binary" "MATCHES" 0 "\\p{IsAlphabetic}+" "ΩA" ""]
-   ["regex/property/binary-emoji" "MATCHES" 0 "\\p{IsEmoji}" "💩" ""]
-
-   ;; Boundaries, line breaks, graphemes, grouping, and quantifier modes.
-   ["regex/boundary/word" "FIND" 0 "\\bword\\b" "a word!" ""]
-   ["regex/boundary/non-word" "FIND" 0 "\\Boo\\B" "zooom" ""]
-   ["regex/boundary/input" "MATCHES" 0 "\\Aabc\\z" "abc" ""]
-   ["regex/boundary/final-terminator" "FIND" 0 "abc\\Z" "abc\r\n" ""]
-   ["regex/boundary/previous-match" "FIND" 0 "\\G." "abc" ""]
-   ["regex/matcher/looking-at" "LOOKING_AT" 0 "ab" "abc" ""]
-   ["regex/linebreak/unicode" "MATCHES" 0 "a\\Rb" "a\r\nb" ""]
-   ["regex/grapheme/cluster" "FIND" 0 "\\X" "á" ""]
-   ["regex/grapheme/regional-indicators" "FIND" 0 "\\X" "🇺🇸🇨🇦" ""]
-   ["regex/grapheme/hangul" "MATCHES" 0 "\\X" "가" ""]
-   ["regex/grapheme/prepend" "MATCHES" 0 "\\X" "؀A" ""]
-   ["regex/grapheme/emoji-modifier" "MATCHES" 0 "\\X" "👍🏽" ""]
-   ["regex/grapheme/emoji-zwj" "MATCHES" 0 "\\X" "👩‍❤️‍💋‍👨" ""]
-   ["regex/grapheme/boundary" "FIND" 0 "a\\b{g}" "á" ""]
-   ["regex/group/numeric-order" "FIND" 0 "(?<first>a)(b)(c)?" "ab" ""]
-   ["regex/group/numeric-backref" "MATCHES" 0 "(?<first>a)(b)\\1\\2" "abab" ""]
-   ["regex/group/named-backref" "MATCHES" 0 "(?<word>ab)-\\k<word>" "ab-ab" ""]
-   ["regex/group/lookahead" "FIND" 0 "a(?=b)" "zab" ""]
-   ["regex/group/lookbehind" "FIND" 0 "(?<=a)b" "zab" ""]
-   ["regex/group/atomic" "MATCHES" 0 "(?>a|ab)c" "abc" ""]
-   ["regex/quantifier/greedy" "FIND" 0 "a+" "aaaa" ""]
-   ["regex/quantifier/reluctant" "FIND" 0 "a+?" "aaaa" ""]
-   ["regex/quantifier/possessive" "MATCHES" 0 "a++a" "aaaa" ""]
-   ["regex/quantifier/possessive-range" "MATCHES" 0 "a{2,3}+a" "aaaa" ""]
-
-   ;; Matcher region/zero-width state, split, and replacement contracts.
-   ["regex/matcher/zero-width-astral" "FIND" 0 "" "😀a" ""]
-   ["regex/matcher/region-matches" "REGION" 0 "^b$" "abc" "1,2,matches"]
-   ["regex/matcher/region-looking-at" "REGION" 0 "b" "abc" "1,3,lookingAt"]
-   ["regex/matcher/region-find" "REGION" 0 "c" "abc" "1,3,find"]
-   ["regex/split/positive-limit" "SPLIT" 0 ":" "boo:and:foo" "2"]
-   ["regex/split/negative-limit" "SPLIT" 0 "o" "boo:and:foo" "-2"]
-   ["regex/split/zero-limit" "SPLIT" 0 "o" "boo:and:foo" "0"]
-   ["regex/split/positive-start" "SPLIT" 0 ":" ":a" "0"]
-   ["regex/split/zero-width-start" "SPLIT" 0 "^" "abc" "0"]
-   ["regex/split/captures-not-returned" "SPLIT" 0 "(,)" "a,b,c" "0"]
-   ["regex/split/astral-zero-width" "SPLIT" 0 "" "😀a" "-1"]
-   ["regex/replace/numeric" "REPLACE_ALL" 0 "(a)(b)" "abxab" "$2$1"]
-   ["regex/replace/whole-match" "REPLACE_ALL" 0 "a" "aba" "<$0>"]
-   ["regex/replace/unmatched-group" "REPLACE_ALL" 0 "(a)?b" "b" "<$1>"]
-   ["regex/replace/zero-width-astral" "REPLACE_ALL" 0 "" "😀a" "-"]
-   ["regex/replace/canonical-equivalence" "REPLACE_ALL" 128 "å" "åx" "X"]
-   ["regex/replace/named" "REPLACE_FIRST" 0 "(?<left>a)(?<right>b)" "abxab" "${right}${left}"]
-   ["regex/replace/escaped" "REPLACE_ALL" 0 "a" "a" "\\$\\\\"]
-   ["regex/replace/append" "APPEND" 0 "(a)" "a-a" "<$1>"]
-   ["regex/replace/missing-group" "REPLACE_ALL" 0 "a" "a" "$4"]
-   ["regex/replace/quote" "QUOTE_REPLACEMENT" 0 "a$\\b" "" ""]])
-
-(def ^:private astral-regex-capture-cases
-  [["regex/astral-capture/literal-plus" "FIND" 0 "(😀+)😈" "😀😀😈" ""]
-   ["regex/astral-capture/codepoint-plus" "FIND" 0 "(\\x{1F600}+)😈" "😀😀😈" ""]
-   ["regex/astral-capture/name-plus" "FIND" 0 "(\\N{GRINNING FACE}+)😈" "😀😀😈" ""]
-   ["regex/astral-capture/singleton-class-plus" "FIND" 0 "([😀]+)😈" "😀😀😈" ""]
-   ["regex/astral-replace/all" "REPLACE_ALL" 0 "(😀+)😈"
-    "😀😀😈😈😍😍😀😀😈😈😍😍" "($0|$1)"]
-   ["regex/astral-replace/first" "REPLACE_FIRST" 0 "(😀+)😈"
-    "😀😀😈😈😍😍😀😀😈😈😍😍" "($0|$1)"]
-   ["regex/astral-replace/last" "REPLACE_LAST" 0 "(😀+)😈"
-    "😀😀😈😈😍😍😀😀😈😈😍😍" "($0|$1)"]
-   ["regex/astral-replace/all-mapped" "REPLACE_ALL_MAPPED" 0 "(😀+)😈"
-    "😀😀😈😈😍😍😀😀😈😈😍😍" "├{}┤"]
-   ["regex/astral-replace/first-mapped" "REPLACE_FIRST_MAPPED" 0 "(😀+)😈"
-    "😀😀😈😈😍😍😀😀😈😈😍😍" "├{}┤"]
-   ["regex/astral-replace/last-mapped" "REPLACE_LAST_MAPPED" 0 "(😀+)😈"
-    "😀😀😈😈😍😍😀😀😈😈😍😍" "├{}┤"]])
 
 (def ^:private base-core-cases
   [["evaluation/module-export" "EVALUATE"
@@ -388,15 +244,6 @@
    (apply str
           (map (fn [[id operation source argument]]
                  (str id "\t" operation "\t" (b64 source) "\t" (b64 argument) "\n"))
-               cases))))
-
-(defn- write-regex-compat-manifest! [^Path manifest cases]
-  (write-text!
-   manifest
-   (apply str
-          (map (fn [[id operation flags pattern input argument]]
-                 (str id "\t" operation "\t" flags "\t" (b64 pattern) "\t"
-                      (b64 input) "\t" (b64 argument) "\n"))
                cases))))
 
 (defn- write-to-fixed-expectations! [^Path output cases]
@@ -1393,15 +1240,15 @@
   (let [proof-root (harness/clean-directory!
                     (paths/resolve-path root "validation-output"
                                         "differential-proof" "astral-regex-captures"))
-        manifest (write-regex-compat-manifest!
-                  (paths/resolve-path proof-root "cases.tsv") astral-regex-capture-cases)
+        manifest (regex-differential/write-manifest!
+                  (paths/resolve-path proof-root "cases.tsv") regex-differential/astral-cases)
         oracle-first (paths/resolve-path proof-root "upstream-first.tsv")
         oracle-second (paths/resolve-path proof-root "upstream-second.tsv")
         package-first (paths/resolve-path proof-root "package-first.tsv")
         package-second (paths/resolve-path proof-root "package-second.tsv")
         perturbed (paths/resolve-path proof-root "historical-boundary-perturbed.tsv")
-        ids (mapv first astral-regex-capture-cases)
-        operations (set (map second astral-regex-capture-cases))]
+        ids (mapv first regex-differential/astral-cases)
+        operations (set (map second regex-differential/astral-cases))]
     (when-not (and (= 10 (count ids))
                    (= (count ids) (count (set ids)))
                    (= #{"FIND" "REPLACE_ALL" "REPLACE_FIRST" "REPLACE_LAST"
@@ -1432,7 +1279,7 @@
     (let [comparison (assert-equal! "quantified astral Java Pattern/Matcher"
                                     oracle-first package-first)
           perturbation (prove-astral-capture-perturbation! oracle-first perturbed)
-          summary {:cases (count astral-regex-capture-cases)
+          summary {:cases (count regex-differential/astral-cases)
                    :capture-span-cases 4
                    :replacement-operations 6
                    :observations (:matched comparison)
@@ -1471,8 +1318,8 @@
   (let [proof-root (harness/clean-directory!
                     (paths/resolve-path root "validation-output"
                                         "differential-proof" "regex-compat"))
-        manifest (write-regex-compat-manifest!
-                  (paths/resolve-path proof-root "cases.tsv") regex-compat-cases)
+        manifest (regex-differential/write-manifest!
+                  (paths/resolve-path proof-root "cases.tsv") regex-differential/fixed-cases)
         oracle-classes (doto (paths/resolve-path proof-root "upstream-classes")
                          (Files/createDirectories (make-array FileAttribute 0)))
         oracle-source (paths/resolve-path root "validation" "regex-compat"
@@ -1500,9 +1347,9 @@
         consumer-source (paths/resolve-path consumer-root "Program.cs")
         probe-source (paths/resolve-path root "validation" "regex-compat"
                                          "RegexCompatPackageProbe.cs")
-        ids (mapv first regex-compat-cases)
-        operations (set (map second regex-compat-cases))
-        flags (set (map #(nth % 2) regex-compat-cases))]
+        ids (mapv first regex-differential/fixed-cases)
+        operations (set (map second regex-differential/fixed-cases))
+        flags (set (map #(nth % 2) regex-differential/fixed-cases))]
     (when-not (and (= 116 (count ids))
                    (= (count ids) (count (set ids)))
                    (every? operations
@@ -1574,7 +1421,7 @@
            {:root root :run-command! run-command! :java java
             :oracle-classes oracle-classes :consumer-root consumer-root
             :consumer-project consumer-project})
-          summary {:cases (count regex-compat-cases)
+          summary {:cases (count regex-differential/fixed-cases)
                    :observations (:matched comparison)
                    :operations (count operations)
                    :compile-flags (sort flags)

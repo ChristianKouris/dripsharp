@@ -1623,6 +1623,8 @@
    [:java-library.mapping.executable/handler-0636
     ["executable:java.util.regex.Pattern#split(java.lang.CharSequence)"]]
    [:java-library.mapping.executable/handler-0637 ["executable:java.util.regex.Matcher#matches()"]]
+   [:java-library.mapping.executable/regex-matcher-reset
+    ["executable:java.util.regex.Matcher#reset()"]]
    [:java-library.mapping.executable/handler-0638
     ["executable:java.util.stream.Stream#of(java.lang.Object[])"]]
    [:java-library.mapping.executable/handler-0642

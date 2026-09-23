@@ -5,6 +5,7 @@
             [dripsharp.package-provenance :as provenance]
             [dripsharp.pkl.differential :as differential]
             [dripsharp.paths :as paths]
+            [dripsharp.regex-differential :as regex-differential]
             [dripsharp.target-execution :as target-execution])
   (:import [java.io ByteArrayOutputStream]
            [java.nio.charset StandardCharsets]
@@ -374,7 +375,7 @@
            (get-in by-id ["to-fixed/minimum-integer" :expected])))))
 
 (deftest regex-compat-contract-inventories-java-pattern-and-matcher-behavior
-  (let [cases (var-get #'differential/regex-compat-cases)
+  (let [cases regex-differential/fixed-cases
         ids (mapv first cases)
         operations (set (map second cases))
         flags (set (map #(nth % 2) cases))]
@@ -433,7 +434,7 @@
     (is (= data (#'differential/read-regex-unicode-source! second-source)))))
 
 (deftest quantified-astral-regex-contract-pins-captures-and-every-replacement-mode
-  (let [cases (var-get #'differential/astral-regex-capture-cases)
+  (let [cases regex-differential/astral-cases
         ids (mapv first cases)
         operations (set (map second cases))]
     (is (= 10 (count cases)))

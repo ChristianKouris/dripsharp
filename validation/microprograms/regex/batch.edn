@@ -1,0 +1,12 @@
+{:schema-version 1
+ :id "regex-matcher-sequences"
+ :generator {:id :bounded-regex-grammar :version 1 :seed 1701}
+ :sources ["subjects/micro/RegexSequences.java"]
+ :configuration "../destination.edn"
+ :input "cases.tsv"
+ :java-observer "../MicroObserver.java"
+ :dotnet-observer "../Program.cs"
+ :operations
+ {"sequence" {:java-type "micro.RegexSequences" :java-method "run"
+              :dotnet-type "DripSharp.Microprograms.RegexSequences" :dotnet-method "Run"
+              :parameters ["string" "int" "string" "string" "int"]}}}

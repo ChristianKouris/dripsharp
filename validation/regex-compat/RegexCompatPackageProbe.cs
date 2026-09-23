@@ -6,12 +6,24 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
+#if !REGEX_COMPAT_DIRECT
 using DripSharp.Brine;
+#endif
 
 internal static class RegexCompatPackageProbe
 {
     private const string Null = "~";
+#if REGEX_COMPAT_DIRECT
+    private static readonly Type Compat = typeof(DripSharp.Runtime.JavaCompat);
+#else
     private static readonly Type Compat = typeof(Evaluator).Assembly.GetType("DripSharp.Runtime.JavaCompat", true)!;
+#endif
+
+    private sealed class RegexCaseException(string category, Exception inner)
+        : Exception(category, inner)
+    {
+        internal string Category { get; } = category;
+    }
 
     public static int Main(string[] args)
     {
@@ -31,9 +43,11 @@ internal static class RegexCompatPackageProbe
             }
             catch (Exception error) when (Unwrap(error) is not OutOfMemoryException and not StackOverflowException)
             {
+                var failure = Unwrap(error);
                 if (Environment.GetEnvironmentVariable("DRIPSHARP_DIFFERENTIAL_DEBUG") is not null)
-                    Console.Error.WriteLine(Unwrap(error));
-                output.Append(id).Append("\tERROR\t").Append(Encode("error")).Append('\n');
+                    Console.Error.WriteLine(failure);
+                output.Append(id).Append("\tERROR\t")
+                    .Append(Encode("failure|" + fields[1] + "|" + Category(failure))).Append('\n');
             }
         }
         File.WriteAllText(args[1], output.ToString(), new UTF8Encoding(false));
@@ -59,6 +73,7 @@ internal static class RegexCompatPackageProbe
             "MATCHES" => ((bool)Invoke(matcher, "Matches")!).ToString().ToLowerInvariant(),
             "LOOKING_AT" => ((bool)Invoke(matcher, "LookingAt")!).ToString().ToLowerInvariant(),
             "FIND" => AllMatches(matcher),
+            "SEQUENCE" => MatcherSequence(matcher, argument),
             "REGION" => Region(matcher, argument),
             "SPLIT" => Sequence((string[])InvokeStatic("RegexSplit", regex, input,
                 int.Parse(argument, CultureInfo.InvariantCulture))!),
@@ -73,8 +88,22 @@ internal static class RegexCompatPackageProbe
         };
     }
 
-    private static Regex Compile(string pattern, int flags) =>
-        (Regex)InvokeStatic("CompileRegex", pattern, flags)!;
+    private static Regex Compile(string pattern, int flags)
+    {
+        try
+        {
+            return (Regex)InvokeStatic("CompileRegex", pattern, flags)!;
+        }
+        catch (Exception error) when (Unwrap(error) is not OutOfMemoryException and not StackOverflowException)
+        {
+            var failure = Unwrap(error);
+            if ((flags & ~511) != 0)
+                throw new RegexCaseException("illegal-argument", failure);
+            if (failure is ArgumentException)
+                throw new RegexCaseException("pattern-syntax", failure);
+            throw;
+        }
+    }
 
     private static bool MatcherBoolean(Regex pattern, string input, string method) =>
         (bool)Invoke(InvokeStatic("RegexMatcher", pattern, input)!, method)!;
@@ -84,6 +113,46 @@ internal static class RegexCompatPackageProbe
         var matches = new List<string>();
         while ((bool)Invoke(matcher, "Find")!) matches.Add(Match(matcher));
         return Sequence(matches.ToArray());
+    }
+
+    private static string MatcherSequence(object matcher, string argument)
+    {
+        var observations = new List<string>();
+        foreach (var step in argument.Split(';'))
+        {
+            if (step == "find" || step.StartsWith("findAt=", StringComparison.Ordinal))
+            {
+                var success = step == "find"
+                    ? (bool)Invoke(matcher, "Find")!
+                    : (bool)Invoke(matcher, "Find", int.Parse(step[7..], CultureInfo.InvariantCulture))!;
+                observations.Add(step + "=" + success.ToString().ToLowerInvariant() + ":" +
+                    (success ? Match(matcher) : Null));
+            }
+            else if (step is "matches" or "lookingAt")
+            {
+                var success = (bool)Invoke(matcher, step == "matches" ? "Matches" : "LookingAt")!;
+                observations.Add(step + "=" + success.ToString().ToLowerInvariant() + ":" +
+                    (success ? Match(matcher) : Null));
+            }
+            else if (step == "reset")
+            {
+                Invoke(matcher, "Reset");
+                observations.Add(step + "=ready");
+            }
+            else if (step.StartsWith("region=", StringComparison.Ordinal))
+            {
+                var bounds = step[7..].Split(':');
+                Invoke(matcher, "Region", int.Parse(bounds[0], CultureInfo.InvariantCulture),
+                    int.Parse(bounds[1], CultureInfo.InvariantCulture));
+                observations.Add(step + "=ready");
+            }
+            else
+            {
+                throw new ArgumentException("unknown sequence step: " + step);
+            }
+        }
+        return observations.Count.ToString(CultureInfo.InvariantCulture) + ":" +
+            string.Join("|", observations);
     }
 
     private static string Region(object matcher, string argument)
@@ -192,6 +261,15 @@ internal static class RegexCompatPackageProbe
 
     private static Exception Unwrap(Exception error) =>
         error is TargetInvocationException { InnerException: { } inner } ? Unwrap(inner) : error;
+
+    private static string Category(Exception error) => error switch
+    {
+        RegexCaseException failure => failure.Category,
+        ArgumentOutOfRangeException or IndexOutOfRangeException => "index-out-of-bounds",
+        InvalidOperationException => "illegal-state",
+        ArgumentException => "illegal-argument",
+        _ => "runtime"
+    };
 
     private static string Decode(string value) => Encoding.UTF8.GetString(Convert.FromBase64String(value));
     private static string Encode(string value)
