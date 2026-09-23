@@ -215,10 +215,6 @@
            (str/replace "\n" "\\n"))
        "\""))
 
-(defn- rendered-type [context ^CtParameter parameter]
-  (:text (csharp/render
-          (java-library/type-node context (.getType parameter)))))
-
 (defn- wrapper-name [test-case]
   (str "__Upstream_" (subs (util/sha256-text (:id test-case)) 0 16)))
 
@@ -291,13 +287,11 @@
         declarations
         (into
          (mapv (fn [^CtParameter parameter]
-                 (str (rendered-type context parameter) " "
+                 (str (adapters/runner-parameter-type context parameter) " "
                       (java-library/identifier (.getSimpleName parameter))))
                parameters)
          (map #(str "object __upstreamArgument" %) (range synthetic-count)))
-        arguments (mapv #(java-library/identifier
-                          (.getSimpleName ^CtParameter %))
-                        parameters)
+        arguments (mapv #(adapters/runner-argument context %) parameters)
         before (get-in test-case [:lifecycle :before-each])
         after (get-in test-case [:lifecycle :after-each])
         method-call (str "this." (.getSimpleName method)
@@ -336,7 +330,7 @@
           (map-indexed
            (fn [argument-index ^CtParameter parameter]
              (str "global::DripSharp.SqlTrellis.Tests.Support.TheoryArgument<"
-                  (rendered-type context parameter)
+                  (adapters/runner-parameter-type context parameter)
                   ">(row[" argument-index "])"))
            parameters)]
       (str "public static global::System.Collections.Generic.IEnumerable<object[]> "
@@ -448,8 +442,8 @@
 
       3
       (csharp/raw
-       (str "private static bool findClasses(global::System.IO.FileInfo root, "
-            "global::System.IO.FileInfo file, Visitor<string> visitor)\n{\n"
+       (str "private static bool findClasses(global::DripSharp.Runtime.JavaFile root, "
+            "global::DripSharp.Runtime.JavaFile file, Visitor<string> visitor)\n{\n"
             "    foreach (string className in "
             "global::DripSharp.SqlTrellis.Tests.Support.SqlTrellisJavaTypeNames())\n"
             "    {\n        if (!visitor.visit(className)) return false;\n    }\n"
@@ -643,7 +637,7 @@
             (mapv
              (fn [member]
                (try
-                 (adapted-target-member base-translate-member context owner member)
+                 (adapted-target-member base-translate-member context owner (adapters/file-safe-test-member! member))
                  (catch Throwable exception
                    (let [data (ex-data exception)
                          diagnostic (:diagnostic data)]
@@ -714,7 +708,7 @@
    "java.lang.reflect.TypeVariable"
    ["global::System.Type" :sqltrellis-test.type/type-variable]
    "java.io.FilenameFilter"
-   ["global::System.Func<global::System.IO.FileInfo, string, bool>"
+   ["global::System.Func<global::DripSharp.Runtime.JavaFile, string, bool>"
     :sqltrellis-test.type/filename-filter]
    "org.javacc.jjtree.JJTree"
    ["global::DripSharp.SqlTrellis.Tests.JavaCcJjTree"
@@ -1347,16 +1341,13 @@
 
           "executable:java.io.File#<init>(java.io.File,java.lang.String)"
           (csharp/invocation
-           (csharp/raw "new global::System.IO.FileInfo")
-           [(csharp/invocation
-             (csharp/raw "global::System.IO.Path.Combine")
-             [(csharp/member (first (:arguments event)) "FullName")
-              (second (:arguments event))])])
+           (csharp/raw "global::DripSharp.Runtime.JavaCompat.NewJavaFile")
+           (:arguments event))
 
           "executable:java.io.FileWriter#<init>(java.io.File,boolean)"
           (csharp/invocation
            (csharp/raw "new global::System.IO.StreamWriter")
-           [(csharp/member (first (:arguments event)) "FullName")
+           [(csharp/invocation (csharp/member (first (:arguments event)) "OpenPath") [])
             (second (:arguments event))])
 
           "executable:java.io.PrintWriter#<init>(java.io.Writer,boolean)"

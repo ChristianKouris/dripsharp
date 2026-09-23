@@ -351,6 +351,7 @@ internal static partial class JavaCompat
         {
             var singleSlash = new Uri("file:///" + value["file:/".Length..], UriKind.Absolute);
             _ = SingleSlashFileUris.GetValue(singleSlash, _ => new object());
+            _ = OriginalUriTexts.GetValue(singleSlash, _ => new JavaUriText(value));
             return singleSlash;
         }
         if (Regex.IsMatch(value, @"(?i)^file:///[a-z]:$"))

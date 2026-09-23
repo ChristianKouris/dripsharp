@@ -6,6 +6,7 @@
 // are omitted entirely from net10 execution projects.
 #if NETSTANDARD2_0
 #nullable enable
+#if !DRIPSHARP_SHARED_JAVA_FILE
 namespace System.Runtime.CompilerServices
 {
     internal sealed class IsExternalInit
@@ -76,6 +77,8 @@ namespace System.Diagnostics.CodeAnalysis
         internal bool ReturnValue { get; }
     }
 }
+
+#endif
 
 namespace DripSharp.Runtime
 {

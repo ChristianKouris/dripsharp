@@ -28,6 +28,9 @@ using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
+#if DRIPSHARP_SHARED_JAVA_FILE
+using JavaFile = global::DripSharp.Runtime.JavaFile;
+#endif
 
 namespace DripSharp.Runtime;
 
@@ -261,6 +264,7 @@ internal sealed class JavaRuntime
 
 internal sealed class JavaProcessBuilder
 {
+    private JavaFile? javaDirectory;
     private readonly ProcessStartInfo startInfo = new()
     {
         UseShellExecute = false,
@@ -288,12 +292,20 @@ internal sealed class JavaProcessBuilder
 
     internal JavaProcessBuilder Directory(string directory)
     {
+        javaDirectory = null;
         startInfo.WorkingDirectory = directory;
         return this;
     }
 
     internal JavaProcessBuilder Directory(FileInfo directory) =>
         Directory(directory.FullName);
+
+    internal JavaProcessBuilder Directory(JavaFile? directory)
+    {
+        Directory(directory?.Pathname ?? "");
+        javaDirectory = directory;
+        return this;
+    }
 
     internal JavaProcessBuilder RedirectError(JavaProcessRedirect redirect)
     {
@@ -303,6 +315,8 @@ internal sealed class JavaProcessBuilder
 
     internal JavaProcess Start()
     {
+        if (javaDirectory is not null && !javaDirectory.Queryable)
+            throw new IOException("Invalid or empty Java working directory.");
         try
         {
             return new JavaProcess(Process.Start(startInfo) ??

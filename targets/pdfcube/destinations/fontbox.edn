@@ -53,7 +53,7 @@
  :package-dependencies ["DripSharp.PdfCarton.IO"]
  :project-references
  ["../DripSharp.PdfCarton.IO/DripSharp.PdfCarton.IO.csproj"]
- :friend-assemblies #{"DripSharp.PdfCarton.Tests"}
+ :friend-assemblies #{"DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight" "DripSharp.PdfCarton.Tests"}
  :external-dependencies
  {"commons-logging:commons-logging:jar:1.4.0"
   {:source-scope :compile-runtime

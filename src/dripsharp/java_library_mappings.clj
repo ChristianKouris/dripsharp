@@ -2199,7 +2199,9 @@
     ["executable:java.net.URI#<init>(java.lang.String)"]]
    [:java-library.mapping.constructor/handler-0015 ["executable:java.io.File#<init>(java.net.URI)"]]
    [:java-library.mapping.constructor/handler-0016
-    ["executable:java.io.File#<init>(java.lang.String,java.lang.String)"]]
+    ["executable:java.io.File#<init>(java.lang.String,java.lang.String)"
+     "executable:java.io.File#<init>(java.io.File,java.lang.String)"
+     "executable:java.io.File#<init>(java.lang.String)"]]
    [:java-library.mapping.constructor/handler-0017
     ["executable:java.io.ByteArrayInputStream#<init>(byte[])"]]
    [:java-library.mapping.constructor/handler-0018
@@ -2287,7 +2289,6 @@
      "executable:java.io.DataOutputStream#<init>(java.io.OutputStream)"
      "executable:java.io.EOFException#<init>()"
      "executable:java.io.EOFException#<init>(java.lang.String)"
-     "executable:java.io.File#<init>(java.lang.String)"
      "executable:java.io.FilterInputStream#<init>(java.io.InputStream)"
      "executable:java.io.FilterOutputStream#<init>(java.io.OutputStream)"
      "executable:java.io.IOException#<init>()"

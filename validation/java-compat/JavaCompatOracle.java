@@ -117,6 +117,7 @@ public final class JavaCompatOracle {
         observe("compression", compressionContract()),
         observe("crc32", crc32Contract()),
         observe("data-output", dataOutputContract()),
+        observe("file-paths", filePathsContract()),
         observe("decimal-format", decimalFormatContract()),
         observe("message-digest", messageDigestContract()),
         observe("message-format", messageFormatContract()),
@@ -133,6 +134,64 @@ public final class JavaCompatOracle {
 
   private static Observation observe(String id, String value) {
     return new Observation("behavior", id, value);
+  }
+
+  private static String filePathsContract() throws Exception {
+    var values = new ArrayList<String>();
+    for (var path : new String[] { "", "missing-file-path", "a//b/", "a/../b", "\0", " " }) {
+      var file = new java.io.File(path);
+      values.add(Base64.getEncoder().encodeToString(file.getPath().getBytes(StandardCharsets.UTF_8)));
+      values.add(Base64.getEncoder().encodeToString(file.getName().getBytes(StandardCharsets.UTF_8)));
+      values.add(Boolean.toString(file.exists()));
+      values.add(Boolean.toString(file.isDirectory()));
+      values.add(Integer.toString(file.hashCode()));
+    }
+    for (var path : new String[] { "/a/../b", "/a b", "/a#b", "/a%z", "/aé", "/a\0b" })
+      values.add(new java.io.File(path).toURI().toString());
+    for (var parent : new String[] { null, "", "a", "/" })
+      values.add(new java.io.File(parent, "/b").getPath());
+    try { new java.io.File((String)null); values.add("accepted-null"); }
+    catch (NullPointerException e) { values.add("null-rejected"); }
+    for (var path : new String[] { "", "\0" }) {
+      try (var stream = new java.io.FileInputStream(new java.io.File(path))) { values.add("opened"); }
+      catch (java.io.FileNotFoundException e) { values.add("open-rejected"); }
+    }
+    for (var uri : new String[] { "file:/a/../b", "file:///a%20b", "file:/a%00b", "file:/", "file://host/a", "file:/a?x", "file:/a#x", "file:a", "/a" }) {
+      try { values.add(new java.io.File(new java.net.URI(uri)).getPath()); }
+      catch (IllegalArgumentException e) { values.add("uri-rejected"); }
+    }
+    for (var parent : new String[] { null, "", "a", "/" }) {
+      values.add(new java.io.File(parent == null ? null : new java.io.File(parent), "b").getPath());
+      try { new java.io.File(parent, (String)null); values.add("accepted-child"); }
+      catch (NullPointerException e) { values.add("child-rejected"); }
+    }
+    var empty = new java.io.File("");
+    values.add(empty.canRead() + ":" + empty.canWrite() + ":" + empty.length() + ":" + empty.lastModified() + ":" + (empty.listFiles() == null));
+    values.add(empty.toPath().toString());
+    try { new java.io.File("\0").toPath(); values.add("path-accepted"); }
+    catch (java.nio.file.InvalidPathException e) { values.add("path-rejected"); }
+    try { new java.io.File((java.net.URI)null); values.add("accepted-null-uri"); }
+    catch (NullPointerException e) { values.add("null-uri-rejected"); }
+    try (var file = new java.io.RandomAccessFile(new java.io.File(""), "bad")) { values.add("mode-accepted"); }
+    catch (IllegalArgumentException e) { values.add("mode-rejected"); }
+    var command = System.getProperty("os.name").startsWith("Windows")
+        ? new String[] { "cmd.exe", "/c", "exit" } : new String[] { "/bin/true" };
+    try { new ProcessBuilder(command).directory(new java.io.File("")).start().waitFor(); values.add("process-started"); }
+    catch (java.io.IOException e) { values.add("process-dir-rejected"); }
+    var root = Files.createTempDirectory("dripsharp-file-");
+    try {
+      var spaced = Files.createDirectory(root.resolve(" "));
+      var ordinary = Files.writeString(root.resolve("ordinary"), "abc");
+      values.add(Boolean.toString(spaced.toFile().isDirectory()));
+      values.add(Boolean.toString(ordinary.toFile().isFile()));
+      values.add(Long.toString(ordinary.toFile().length()));
+      values.add(Integer.toString(root.toFile().listFiles().length));
+    } finally {
+      Files.deleteIfExists(root.resolve("ordinary"));
+      Files.deleteIfExists(root.resolve(" "));
+      Files.delete(root);
+    }
+    return String.join("|", values);
   }
 
   private static String atomicPrimitives() {

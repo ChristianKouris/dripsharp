@@ -121,7 +121,7 @@ internal static class Support
         new global::System.IO.StreamReader(input, encoding, true, 1024, false);
 
     internal static global::System.IO.StreamWriter NewFileWriter(
-        global::System.IO.FileInfo file) => new(file.FullName, false);
+        global::DripSharp.Runtime.JavaFile file) => new(file.OpenPath(), false);
 
     internal static void WriteAllBytes(string path, sbyte[] values)
     {
@@ -266,28 +266,26 @@ internal static class Support
             ? global::DripSharp.Runtime.JavaStandardCharsets.UTF16
             : global::System.Text.Encoding.GetEncoding(name);
 
-    internal static bool Mkdirs(global::System.IO.FileInfo directory)
+    internal static bool Mkdirs(global::DripSharp.Runtime.JavaFile directory)
     {
-        bool absent = !global::System.IO.Directory.Exists(directory.FullName);
-        global::System.IO.Directory.CreateDirectory(directory.FullName);
+        if (!directory.Queryable) return false;
+        bool absent = !directory.IsDirectory;
+        global::System.IO.Directory.CreateDirectory(directory.Pathname);
         return absent;
     }
 
-    internal static global::System.IO.FileInfo ParentFile(
-        global::System.IO.FileInfo file) =>
-        new(global::System.IO.Path.GetDirectoryName(file.FullName)!);
+    internal static global::DripSharp.Runtime.JavaFile? ParentFile(
+        global::DripSharp.Runtime.JavaFile file) =>
+        file.Parent is null ? null : new(file.Parent);
 
-    internal static global::System.IO.FileInfo[] ListFiles(
-        global::System.IO.FileInfo directory,
-        global::System.Func<global::System.IO.FileInfo, string, bool> filter) =>
-        global::System.IO.Directory.EnumerateFileSystemEntries(directory.FullName)
-            .Select(path => new global::System.IO.FileInfo(path))
-            .Where(file => filter(directory, file.Name))
-            .ToArray();
+    internal static global::DripSharp.Runtime.JavaFile[] ListFiles(
+        global::DripSharp.Runtime.JavaFile directory,
+        global::System.Func<global::DripSharp.Runtime.JavaFile, string, bool> filter) =>
+        directory.ListFiles()?.Where(file => filter(directory, file.Name)).ToArray()!;
 
     internal static global::System.Collections.Generic.ICollection<
-        global::System.IO.FileInfo> ListFiles(
-            global::System.IO.FileInfo directory,
+        global::DripSharp.Runtime.JavaFile> ListFiles(
+            global::DripSharp.Runtime.JavaFile directory,
             string[]? extensions,
             bool recursive)
     {
@@ -300,21 +298,21 @@ internal static class Support
                 extensions.Select(extension => extension.TrimStart('.')),
                 global::System.StringComparer.OrdinalIgnoreCase);
         return global::System.IO.Directory.EnumerateFiles(
-                directory.FullName, "*", search)
+                directory.Pathname, "*", search)
             .Where(path => accepted is null ||
                 accepted.Contains(global::System.IO.Path.GetExtension(path).TrimStart('.')))
-            .Select(path => new global::System.IO.FileInfo(path))
+            .Select(path => new global::DripSharp.Runtime.JavaFile(path))
             .ToArray();
     }
 
     internal static global::System.Collections.Generic.ICollection<object>
         ListFilesObjects(
-            global::System.IO.FileInfo directory,
+            global::DripSharp.Runtime.JavaFile directory,
             string[]? extensions,
             bool recursive) =>
         ListFiles(directory, extensions, recursive).Cast<object>().ToArray();
 
-    internal static void DeleteOnExit(global::System.IO.FileInfo file)
+    internal static void DeleteOnExit(global::DripSharp.Runtime.JavaFile file)
     {
         lock (DeleteOnExitLock)
         {
@@ -519,7 +517,7 @@ internal static class Support
     internal static bool WriteImage(
         global::SkiaSharp.SKBitmap image,
         string format,
-        global::System.IO.FileInfo destination)
+        global::DripSharp.Runtime.JavaFile destination)
     {
         global::SkiaSharp.SKEncodedImageFormat encodedFormat =
             format.Equals("jpg", global::System.StringComparison.OrdinalIgnoreCase) ||
@@ -530,7 +528,8 @@ internal static class Support
         using global::SkiaSharp.SKImage encodedImage =
             global::SkiaSharp.SKImage.FromBitmap(image);
         using global::SkiaSharp.SKData data = encodedImage.Encode(encodedFormat, 100);
-        using global::System.IO.Stream output = destination.Open(
+        using global::System.IO.Stream output = new global::System.IO.FileStream(
+            destination.OpenPath(),
             global::System.IO.FileMode.Create,
             global::System.IO.FileAccess.Write,
             global::System.IO.FileShare.None);
@@ -613,8 +612,8 @@ internal static class Support
             dataType, width, height, 1);
     }
 
-    internal static global::System.IO.FileInfo TestFile(string path)
-        => new(TestPath(string.Empty, path));
+    internal static global::DripSharp.Runtime.JavaFile TestFile(string path)
+        => new(path is null || path.Length == 0 || path.IndexOf('\0') >= 0 ? path! : TestPath(string.Empty, path));
 
     internal static string TestPath(string path) => TestPath(string.Empty, path);
 
@@ -685,7 +684,7 @@ internal static class Support
         return path;
     }
 
-    private static global::System.IO.FileInfo WritableFixture(string relative)
+    private static global::DripSharp.Runtime.JavaFile WritableFixture(string relative)
     {
         string source = ContainedFixturePath(relative, allowDirectory: true);
         string root = MutableArtifactRoot("WritableFixtures");
@@ -709,7 +708,7 @@ internal static class Support
                 global::System.IO.File.Copy(source, destination);
             }
         }
-        return new global::System.IO.FileInfo(destination);
+        return new global::DripSharp.Runtime.JavaFile(destination);
     }
 
     internal static string ResetMutableTestArtifactsForContract()

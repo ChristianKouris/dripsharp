@@ -64,8 +64,8 @@ internal static class Support
         writer.Write(value);
 
     internal static string ReadFileText(
-        global::System.IO.FileInfo file, global::System.Text.Encoding encoding) =>
-        global::System.IO.File.ReadAllText(file.FullName, encoding);
+        global::DripSharp.Runtime.JavaFile file, global::System.Text.Encoding encoding) =>
+        global::System.IO.File.ReadAllText(file.OpenPath(), encoding);
 
     internal static global::System.IO.Stream ResourceStream(
         global::System.Type owner, string name) =>
@@ -104,26 +104,26 @@ internal static class Support
         return new JavaAssertionValue(actual ?? exception.Message);
     }
 
-    internal static global::System.IO.FileInfo[] ListFiles(
-        global::System.IO.FileInfo directory,
-        global::System.Func<global::System.IO.FileInfo, string, bool> filter) =>
+    internal static global::DripSharp.Runtime.JavaFile[] ListFiles(
+        global::DripSharp.Runtime.JavaFile directory,
+        global::System.Func<global::DripSharp.Runtime.JavaFile, string, bool> filter) =>
         global::System.Linq.Enumerable.ToArray(
             global::System.Linq.Enumerable.Select(
                 global::System.Linq.Enumerable.Where(
-                    global::System.IO.Directory.EnumerateFileSystemEntries(directory.FullName),
+                    global::System.IO.Directory.EnumerateFileSystemEntries(directory.Pathname),
                     path => filter(directory, global::System.IO.Path.GetFileName(path))),
-                path => new global::System.IO.FileInfo(path)));
+                path => new global::DripSharp.Runtime.JavaFile(path)));
 
-    internal static bool JavaMkdirs(global::System.IO.FileInfo directory)
+    internal static bool JavaMkdirs(global::DripSharp.Runtime.JavaFile directory)
     {
-        if (global::System.IO.Directory.Exists(directory.FullName)) return false;
-        global::System.IO.Directory.CreateDirectory(directory.FullName);
+        if (!directory.Queryable || directory.IsDirectory) return false;
+        global::System.IO.Directory.CreateDirectory(directory.Pathname);
         return true;
     }
 
-    internal static global::System.IO.FileInfo? ParentFile(
-        global::System.IO.FileInfo file) =>
-        file.Directory is null ? null : new global::System.IO.FileInfo(file.Directory.FullName);
+    internal static global::DripSharp.Runtime.JavaFile? ParentFile(
+        global::DripSharp.Runtime.JavaFile file) =>
+        file.Parent is null ? null : new global::DripSharp.Runtime.JavaFile(file.Parent);
 
     internal static T TheoryArgument<T>(object? value)
     {
@@ -151,8 +151,9 @@ internal static class Support
         return (T)value;
     }
 
-    internal static global::System.IO.FileInfo TestFile(string path)
+    internal static global::DripSharp.Runtime.JavaFile TestFile(string path)
     {
+        if (path is null || path.Length == 0 || path.IndexOf('\0') >= 0) return new(path!);
         const string sourceFixturePrefix = "src/test/resources/";
         if (path.StartsWith(sourceFixturePrefix, global::System.StringComparison.Ordinal))
         {
@@ -166,13 +167,13 @@ internal static class Support
         foreach (string prefix in fixturePrefixes)
         {
             if (!path.StartsWith(prefix, global::System.StringComparison.Ordinal)) continue;
-            return new global::System.IO.FileInfo(
+            return new global::DripSharp.Runtime.JavaFile(
                 ContainedFixturePath(path.Substring(prefix.Length), allowDirectory: true));
         }
-        return new global::System.IO.FileInfo(path);
+        return new global::DripSharp.Runtime.JavaFile(path);
     }
 
-    private static global::System.IO.FileInfo WritableFixture(string relative)
+    private static global::DripSharp.Runtime.JavaFile WritableFixture(string relative)
     {
         string source = ContainedFixturePath(relative, allowDirectory: true);
         string root = global::System.IO.Path.GetFullPath(global::System.IO.Path.Combine(
@@ -206,7 +207,7 @@ internal static class Support
                 global::System.IO.File.Copy(source, destination);
             }
         }
-        return new global::System.IO.FileInfo(destination);
+        return new global::DripSharp.Runtime.JavaFile(destination);
     }
 
     private static void CopyFixtureDirectory(string source, string destination)

@@ -36,7 +36,7 @@
    {:sources []
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 14596 :total-lines 16747}}
+    :budget {:authored-lines 15268 :total-lines 17419}}
    :required-capabilities
    #{:java-compat :java-io :java-nio :java-regex-unicode}}
   {:id "pdfcube-fontbox"
@@ -53,7 +53,7 @@
      :pdfcube/image-codecs-unsupported]
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 27589 :total-lines 45073}}
+    :budget {:authored-lines 28273 :total-lines 45757}}
    :required-capabilities
    #{:font-discovery :icc :java-bidi :java-compat :java-regex-unicode
      :skia-geometry}}
@@ -67,7 +67,7 @@
    {:sources []
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 14596 :total-lines 22060}}
+    :budget {:authored-lines 15268 :total-lines 22732}}
    :required-capabilities #{:java-compat :java-regex-unicode :xml}}
   {:id "pdfcube-pdfbox"
    :path "profiles/pdfbox.edn"
@@ -83,7 +83,7 @@
      :pdfcube/pdfbox-compat :pdfcube/jbig2 :pdfcube/jpx]
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 13138 :total-lines 194351}}
+    :budget {:authored-lines 13143 :total-lines 194356}}
    :required-capabilities
    #{:calendar-value-semantics :icc :java-bidi :java-compat
      :java-regex-unicode :jbig2 :jpx :managed-raster :printing
@@ -174,18 +174,18 @@
     :package-format :snupkg
     :source-link :exact-generated-product-commit}
    :version-policy {:kind :upstream-alpha-revision
-                    :translator-revision 4}
+                    :translator-revision 5}
    :readme "README.md"
    :icon
    {:status :deferred
     :reason
     "A package icon is deferred until a shared DripSharp visual identity is approved; omission is value-neutral and does not imply upstream or publisher branding."}
    :packages
-   {"DripSharp.PdfCarton.IO" {:version "3.0.8-alpha.4"}
-    "DripSharp.PdfCarton.Fonts" {:version "3.0.8-alpha.4"}
-    "DripSharp.PdfCarton.Xmp" {:version "3.0.8-alpha.4"}
-    "DripSharp.PdfCarton" {:version "3.0.8-alpha.4"}
-    "DripSharp.PdfCarton.Preflight" {:version "3.0.8-alpha.4"}}
+   {"DripSharp.PdfCarton.IO" {:version "3.0.8-alpha.5"}
+    "DripSharp.PdfCarton.Fonts" {:version "3.0.8-alpha.5"}
+    "DripSharp.PdfCarton.Xmp" {:version "3.0.8-alpha.5"}
+    "DripSharp.PdfCarton" {:version "3.0.8-alpha.5"}
+    "DripSharp.PdfCarton.Preflight" {:version "3.0.8-alpha.5"}}
    :bundle
    {:package-id "DripSharp.PdfCarton"
     :profile "pdfcube-preflight"

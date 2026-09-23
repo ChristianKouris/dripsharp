@@ -194,7 +194,7 @@
                                   :dotnet.type/stream]
    "java.io.StringWriter" ["global::System.IO.StringWriter"
                            :dotnet.type/string-writer]
-   "java.io.File" ["global::System.IO.FileInfo" :dotnet.type/file]
+   "java.io.File" ["global::DripSharp.Runtime.JavaFile" :dotnet.type/file]
    "java.io.RandomAccessFile" ["global::DripSharp.Runtime.JavaRandomAccessFile"
                                :dotnet.type/random-access-file]
 

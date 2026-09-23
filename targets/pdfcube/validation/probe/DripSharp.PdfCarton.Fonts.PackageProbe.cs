@@ -928,13 +928,15 @@ internal static class Program
         var adapter = typeof(FontFileFinder).Assembly.GetType(
             "DripSharp.PdfCarton.Runtime.Fonts.PdfCartonFontDiscovery",
             throwOnError: true)!;
+        var javaFile = typeof(DripSharp.PdfCarton.IO.RandomAccessReadBuffer).Assembly
+            .GetType("DripSharp.Runtime.JavaFile", throwOnError: true)!;
         var method = adapter.GetMethod(
             "FileListFiles",
             BindingFlags.NonPublic | BindingFlags.Static,
             binder: null,
             types:
             [
-                typeof(FileInfo),
+                javaFile,
                 typeof(Func<string, IEnumerable<string>>)
             ],
             modifiers: null)
@@ -944,7 +946,8 @@ internal static class Program
             _ => throw new UnauthorizedAccessException("focused inaccessible path");
         var result = method.Invoke(
             null,
-            [new FileInfo(directory), inaccessible]);
+            [Activator.CreateInstance(javaFile, BindingFlags.Instance | BindingFlags.NonPublic,
+                binder: null, args: [directory], culture: null), inaccessible]);
         if (result is not null)
             throw new InvalidOperationException(
                 "FontBox inaccessible-directory adapter did not match File.listFiles().");

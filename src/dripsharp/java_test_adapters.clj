@@ -16,8 +16,32 @@
            [spoon.reflect.code CtConstructorCall CtExecutableReferenceExpression
             CtFieldRead CtInvocation CtLambda CtTypeAccess]
            [spoon.reflect.declaration CtAnnotation CtElement CtField CtParameter
-            CtType]
+            CtType ModifierKind]
            [spoon.reflect.reference CtTypeReference CtWildcardReference]))
+
+(defn file-safe-test-member!
+  "Keep translated fixture storage internal; only runner entry points are public."
+  [member]
+  (when (and (instance? CtField member)
+             (java-library/java-file-reference? (.getType ^CtField member)))
+    (.removeModifier ^CtField member ModifierKind/PUBLIC)
+    (.removeModifier ^CtField member ModifierKind/PROTECTED))
+  member)
+
+(defn runner-parameter-type
+  "Use an object carrier for File-bearing theory data, including unexportable paths."
+  [context ^CtParameter parameter]
+  (if (java-library/java-file-reference? (.getType parameter))
+    "object"
+    (:text (csharp/render (java-library/type-node context (.getType parameter))))))
+
+(defn runner-argument [context ^CtParameter parameter]
+  (let [name (java-library/identifier (.getSimpleName parameter))]
+    (if (java-library/java-file-reference? (.getType parameter))
+      (str "global::DripSharp.Runtime.JavaFileBridge.Import<"
+           (:text (csharp/render (java-library/type-node context (.getType parameter))))
+           ">(" name ")")
+      name)))
 
 (def schema-version 1)
 

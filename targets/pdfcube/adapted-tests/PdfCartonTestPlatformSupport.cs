@@ -5,6 +5,6 @@ namespace DripSharp.Runtime;
 
 internal static class PdfCartonFontDiscovery
 {
-    internal static bool FileExists(global::System.IO.FileInfo file) =>
-        global::System.IO.File.Exists(file.FullName);
+    internal static bool FileExists(JavaFile file) =>
+        JavaCompat.FileExists(file);
 }

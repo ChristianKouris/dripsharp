@@ -2950,7 +2950,7 @@
      "targets/pdfcube/validation/probe/DripSharp.PdfCarton.IO.FocusedConsumer.cs"
      :success-message "DripSharp.PdfCarton.IO focused behavior passed."}
     :friend-assemblies
-    #{"DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"
+    #{"DripSharp.PdfCarton" "DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton.Preflight"
       "DripSharp.PdfCarton.Tests"}
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package csharp-package memory-package code-pages-package]
@@ -2971,7 +2971,7 @@
     :package-dependencies ["DripSharp.PdfCarton.IO"]
     :project-references
     ["../DripSharp.PdfCarton.IO/DripSharp.PdfCarton.IO.csproj"]
-    :friend-assemblies #{"DripSharp.PdfCarton.Tests"}
+    :friend-assemblies #{"DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight" "DripSharp.PdfCarton.Tests"}
     :package-consumer
     {:strategy :source-file
      :project-file "DripSharp.PdfCarton.Fonts.PackageConsumer.csproj"
@@ -3359,13 +3359,16 @@
         (vec
          (remove
           nil?
-          [(when
-            (contains? (:internal-capabilities configuration)
-                       :security-handler-erasure)
+          [(when (or (contains? (:internal-capabilities configuration) :security-handler-erasure)
+                     (contains? #{:fontbox :pdfbox :preflight} (:pdfcube-product configuration)))
              (project-xml/element
               "DefineConstants"
               [(project-xml/text
-                "$(DefineConstants);DRIPSHARP_PDFBOX_CRYPTO")]))
+                (str "$(DefineConstants)"
+                     (when (contains? (:internal-capabilities configuration) :security-handler-erasure)
+                       ";DRIPSHARP_PDFBOX_CRYPTO")
+                     (when (contains? #{:fontbox :pdfbox :preflight} (:pdfcube-product configuration))
+                       ";DRIPSHARP_SHARED_JAVA_FILE")))]))
            (project-xml/element
             "PackageLicenseFile"
             [(project-xml/text (:package-path license))])]))
@@ -3806,7 +3809,14 @@
           node
           (csharp/transform-namespaces
            node
-           {base-compatibility-namespace destination}))]
+           {base-compatibility-namespace destination}))
+        node (if (= :fontbox (:pdfcube-product configuration))
+               (csharp/transform-namespaces
+                node
+                (into {} (map (fn [name] [(str destination "." name)
+                                         (str base-compatibility-namespace "." name)])
+                              ["JavaFile" "JavaFileBridge" "JavaFileBoundary"])))
+               node)]
     (->> node
          (erase-security-handler-carrier configuration)
          (preserve-calendar-value-semantics configuration)
@@ -3817,13 +3827,23 @@
          (preserve-preflight-generic-contracts configuration))))
 
 (defn- compatibility-asset [configuration asset]
-  (if (= base-compatibility-namespace
-         (compatibility-namespace configuration))
-    asset
-    (assoc asset
+  (let [asset (if (= base-compatibility-namespace
+                    (compatibility-namespace configuration))
+                asset
+                (assoc asset
            :text-replacements
            {(str "namespace " base-compatibility-namespace)
-            (str "namespace " (compatibility-namespace configuration))})))
+            (str "namespace " (compatibility-namespace configuration))}))]
+    (if (and (= :fontbox (:pdfcube-product configuration))
+             (some #(str/ends-with? (str (:source asset)) %)
+                   ["DripSharp.JavaCompat.Java.IO.cs"
+                    "DripSharp.PdfCarton.Fonts.Discovery.cs"
+                    "DripSharp.PdfCarton.Fonts.Compat.cs"]))
+      (update asset :text-prefix
+              #(str "using JavaFile = global::DripSharp.Runtime.JavaFile;\n"
+                    "using JavaFileBridge = global::DripSharp.Runtime.JavaFileBridge;\n"
+                    %))
+      asset)))
 
 (defn- legal-assets [{:keys [workspace-root configuration]}]
   (validate-legal-inputs! workspace-root configuration)

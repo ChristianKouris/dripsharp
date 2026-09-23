@@ -1000,10 +1000,6 @@
            (str/replace "\n" "\\n"))
        "\""))
 
-(defn- rendered-type [context ^CtParameter parameter]
-  (:text (csharp/render
-          (java-library/type-node context (.getType parameter)))))
-
 (defn- java-string-hash-code [value]
   (reduce (fn [hash character]
             (unchecked-int (+ (unchecked-multiply-int 31 hash)
@@ -1095,13 +1091,11 @@
         declarations
         (into
          (mapv (fn [^CtParameter parameter]
-                 (str (rendered-type context parameter) " "
+                 (str (adapters/runner-parameter-type context parameter) " "
                       (java-library/identifier (.getSimpleName parameter))))
                parameters)
          (map #(str "object __upstreamArgument" %) (range synthetic-count)))
-        arguments (mapv #(java-library/identifier
-                          (.getSimpleName ^CtParameter %))
-                        parameters)
+        arguments (mapv #(adapters/runner-argument context %) parameters)
         before (get-in test-case [:lifecycle :before-each])
         after (get-in test-case [:lifecycle :after-each])
         before-all (get-in class-plan [:lifecycle :before-all])
@@ -1160,12 +1154,19 @@
           provider (if provider-method
                      (emitted-method-name provider-method)
                      provider)
+          provider (if (and provider-method
+                            (java-library/java-file-reference?
+                             (.getType ^CtMethod provider-method))
+                            (or (.hasModifier ^CtMethod provider-method ModifierKind/PUBLIC)
+                                (.hasModifier ^CtMethod provider-method ModifierKind/PROTECTED)))
+                     (str "__JavaFile_" provider)
+                     provider)
           parameters (vec (.getParameters ^CtMethod (:method-element test-case)))
           adapted-arguments
           (map-indexed
            (fn [argument-index ^CtParameter parameter]
              (str "global::DripSharp.PdfCarton.Tests.Support.TheoryArgument<"
-                  (rendered-type context parameter)
+                  (adapters/runner-parameter-type context parameter)
                   ">(row[" argument-index "])"))
            parameters)]
       (str "public static global::System.Collections.Generic.IEnumerable<object[]> "
@@ -1200,7 +1201,7 @@
             (mapv
              (fn [member]
                (try
-                 (base-translate-member context owner member)
+                 (base-translate-member context owner (adapters/file-safe-test-member! member))
                  (catch Throwable exception
                    (let [data (ex-data exception)
                          diagnostic (:diagnostic data)]
@@ -1989,7 +1990,7 @@
              ["global::DripSharp.PdfCarton.Tests.JavaDirectColorModel"
               :pdfcarton.test/packed-color-model]
              "java.io.FilenameFilter"
-             [(str "global::System.Func<global::System.IO.FileInfo, "
+             [(str "global::System.Func<global::DripSharp.Runtime.JavaFile, "
                    "string, bool>")
               :pdfcarton.test/filename-filter]
              "java.nio.file.CopyOption"
@@ -2199,11 +2200,8 @@
 
           "executable:java.io.File#<init>(java.io.File,java.lang.String)"
           (csharp/invocation
-           (csharp/raw "new global::System.IO.FileInfo")
-           [(csharp/invocation
-             (csharp/raw "global::System.IO.Path.Combine")
-             [(csharp/member (first arguments) "FullName")
-              (second arguments)])])
+           (csharp/raw "global::DripSharp.Runtime.JavaCompat.NewJavaFile")
+           arguments)
 
           "executable:java.io.OutputStreamWriter#<init>(java.io.OutputStream,java.lang.String)"
           (csharp/invocation

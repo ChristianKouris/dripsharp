@@ -591,6 +591,10 @@
                             :rule rule})
               [node rule])
           [node rule])
+        node (if (and (:java-file-api? ctx)
+                      (= "java.io.File" (.getQualifiedName reference))
+                      (= "global::DripSharp.Runtime.JavaFile" (:text (csharp/render node))))
+               (raw "global::System.IO.FileInfo") node)
         node (if-let [decorate-node (:decorate-node policy)]
                (decorate-node ctx reference node)
                node)]
@@ -4576,7 +4580,7 @@
    :java-library.mapping.executable/handler-0463
    (fn
      [{:keys [target-node]}]
-     {:node (sequence-node [(raw "new global::System.IO.FileInfo(") target-node (raw ")")])}),
+     {:node (compat-call "NewJavaFile" [target-node])}),
    :java-library.mapping.executable/handler-0301
    (fn
      [{:keys [target-node arguments]}]
@@ -4662,7 +4666,7 @@
      [{:keys [target-node arguments]}]
      {:node (compat-call "Equals" (into [target-node] arguments))}),
    :java-library.mapping.executable/handler-0456
-   (fn [{:keys [target-node]}] {:node (sequence-node [target-node (raw ".FullName")])}),
+   (fn [{:keys [target-node]}] {:node (compat-call "FileGetAbsolutePath" [target-node])}),
    :java-library.mapping.executable/handler-0590
    (fn [{:keys [target-node]}] {:node (sequence-node [target-node (raw ".Clear()")])}),
    :java-library.mapping.executable/handler-0326
@@ -5241,8 +5245,7 @@
    (fn
      [{:keys [target-node]}]
      {:node
-      (sequence-node
-       [(raw "new global::DripSharp.Runtime.JavaPath(") target-node (raw ".FullName)")])}),
+      (compat-call "FileToPath" [target-node])}),
    :java-library.mapping.executable/handler-0645
    (fn
      [{:keys [target-node arguments]}]
@@ -5977,9 +5980,9 @@
    :java-library.mapping.constructor/handler-0014
    (fn [{:keys [arguments]}] {:node (compat-call "NewUri" arguments)}),
    :java-library.mapping.constructor/handler-0015
-   (fn [{:keys [arguments]}] {:node (compat-call "NewFileInfo" arguments)}),
+   (fn [{:keys [arguments]}] {:node (compat-call "NewJavaFile" arguments)}),
    :java-library.mapping.constructor/handler-0016
-   (fn [{:keys [arguments]}] {:node (compat-call "NewFileInfo" arguments)}),
+   (fn [{:keys [arguments]}] {:node (compat-call "NewJavaFile" arguments)}),
    :java-library.mapping.constructor/handler-0017
    (fn
      [{:keys [arguments]}]
@@ -6291,6 +6294,90 @@
                (instance? CtReturn returned))
       (translated-node ctx (.getReturnedExpression ^CtReturn returned)))))
 
+(defn java-file-reference?
+  "Whether a source type contains a Java File value requiring a native API adapter."
+  [^CtTypeReference reference]
+  (boolean
+   (and reference
+        (or (= "java.io.File" (.getQualifiedName reference))
+            (and (instance? CtArrayTypeReference reference)
+                 (java-file-reference? (.getComponentType ^CtArrayTypeReference reference)))
+            (some java-file-reference? (.getActualTypeArguments reference))))))
+
+(defn java-file-boundary-reference?
+  "Whether the effective destination mapping uses the shared Java pathname type."
+  [ctx ^CtTypeReference reference]
+  (and (java-file-reference? reference)
+       (str/includes? (:text (csharp/render (type-node (dissoc ctx :java-file-api?) reference)))
+                      "global::DripSharp.Runtime.JavaFile")))
+
+(defn- java-file-executable? [ctx executable]
+  (and (instance? CtExecutable executable)
+       (or (and (instance? CtMethod executable)
+                (java-file-boundary-reference? ctx (.getType ^CtMethod executable)))
+           (some #(java-file-boundary-reference? ctx (.getType ^CtParameter %))
+                 (.getParameters ^CtExecutable executable)))))
+
+(defn- java-file-public-executable? [ctx executable]
+  (and (java-file-executable? ctx executable)
+       (or (.hasModifier ^CtModifiable executable ModifierKind/PUBLIC)
+           (.hasModifier ^CtModifiable executable ModifierKind/PROTECTED)
+           (interface-type? (.getDeclaringType executable)))))
+
+(defn- java-file-conversion [ctx direction reference node]
+  (if-not (java-file-boundary-reference? ctx reference)
+    node
+    (sequence-node
+     [(raw (str "global::DripSharp.Runtime.JavaFileBridge." direction "<"))
+      (type-node ctx reference) (raw ">(") node (raw ")")])) )
+
+(defn- java-file-invocation [ctx declaration target-node arguments super? parameter-types result-type]
+  (when (java-file-public-executable? ctx declaration)
+    (let [^CtMethod method declaration
+          owner (.getDeclaringType method)
+          static? (.hasModifier method ModifierKind/STATIC)
+          void? (= "void" (.getQualifiedName (.getType method)))
+          api-ctx (assoc ctx :java-file-api? true)]
+      (if super?
+        (csharp/invocation
+         (csharp/member target-node (str "__JavaFile_" (method-name ctx owner method)))
+         arguments)
+        (sequence-node
+       [(raw "global::DripSharp.Runtime.JavaFileBridge.Call")
+        (when-not void?
+          (sequence-node [(raw "<") (type-node ctx result-type) (raw ">")]))
+        (raw "(")
+        (if static?
+          (sequence-node [(raw "typeof(") target-node (raw ")")])
+          target-node)
+        (raw (str ", \"" (method-name ctx owner method) "\", new global::System.Type[] { "))
+        (sequence-node
+         (mapv #(sequence-node [(raw "typeof(") (type-node api-ctx %) (raw ")")])
+               parameter-types) ", ")
+        (raw " }, new object[] { ") (sequence-node arguments ", ") (raw " })")])))))
+
+(defn- external-java-file-invocation [ctx element target-node method-node arguments]
+  (let [reference (.getExecutable ^CtInvocation element)
+        parameters (.getParameters reference)
+        result (.getType reference)]
+    (when (and (translated-external-type-base ctx (.getDeclaringType reference))
+               (or (java-file-boundary-reference? ctx result)
+                   (some #(java-file-boundary-reference? ctx %) parameters)))
+      (sequence-node
+       [(raw "global::DripSharp.Runtime.JavaFileBridge.Call")
+        (when-not (= "void" (.getQualifiedName result))
+          (sequence-node [(raw "<") (type-node ctx result) (raw ">")]))
+        (raw "(")
+        (if (.isStatic reference)
+          (sequence-node [(raw "typeof(") target-node (raw ")")]) target-node)
+        (raw ", nameof(") target-node (raw ".") method-node
+        (raw "), new global::System.Type[] { ")
+        (sequence-node
+         (mapv #(sequence-node [(raw "typeof(")
+                               (type-node (assoc ctx :java-file-api? true) %)
+                               (raw ")")]) parameters) ", ")
+        (raw " }, new object[] { ") (sequence-node arguments ", ") (raw " })")]))))
+
 (defn- body-rules [ctx-holder]
   (let [shared-mappings (shared-mapping-registry ctx-holder)]
     (java/structural-rules
@@ -6398,6 +6485,17 @@
                  (raw "")
                  (or
                   destination-adaptation
+                  (when (and (instance? CtMethod declaration)
+                             (or (= :project (:origin occurrence))
+                                 (translated-external-type-base
+                                  @ctx-holder (.getReference (.getDeclaringType ^CtMethod declaration)))))
+                    (java-file-invocation @ctx-holder declaration target-node arguments
+                                          (instance? CtSuperAccess target)
+                                          parameter-types (.getType element)))
+                  (when-not (= :project (:origin occurrence))
+                    (external-java-file-invocation
+                     @ctx-holder element target-node
+                     (child-node children (.getExecutable element)) arguments))
                   (inherited-runtime-object-invocation-node
                    occurrence target-node arguments)
                   (reflection-invocation-node
@@ -6735,7 +6833,9 @@
              @ctx-holder element
              (cond
                file-delete-reference?
-               (raw "(value0) => { value0.Delete(); }")
+               (raw (if discards-result?
+                      "(value0) => { global::DripSharp.Runtime.JavaCompat.FileDelete(value0); }"
+                      "(value0) => global::DripSharp.Runtime.JavaCompat.FileDelete(value0)"))
 
                (= "executable:java.lang.Class#isInstance(java.lang.Object)"
                   (:key occurrence))
@@ -6943,6 +7043,24 @@
                          (type-node @ctx-holder element-type))])
                      target)
                    (raw "()")]))
+
+               (and (instance? CtMethod declaration)
+                    (java-file-public-executable? @ctx-holder declaration))
+               (let [unbound? (and (instance? CtTypeAccess target-element) (not static?))
+                     receiver (if unbound? (raw "value0") target)
+                     arguments (if unbound?
+                                 (mapv #(raw (str "value" %)) (range 1 (inc parameter-count)))
+                                 parameters)
+                     lambda-parameters (if unbound? (into [receiver] arguments) arguments)
+                     reference (.getExecutable element)
+                     invocation (java-file-invocation
+                                 @ctx-holder declaration receiver arguments
+                                 (instance? CtSuperAccess target-element)
+                                 (.getParameters reference) (.getType reference))]
+                 (sequence-node
+                  [(raw "(") (sequence-node lambda-parameters ", ")
+                   (raw (if discards-result? ") => { " ") => "))
+                   invocation (when discards-result? (raw "; }"))]))
 
                constructor?
                (let [target-type
@@ -7466,7 +7584,12 @@
        :emit
        (fn [{:keys [^CtArrayRead element children]}]
          (let [node
-               (sequence-node [(child-node children (.getTarget element))
+               (sequence-node [(let [target (.getTarget element)
+                                     node (child-node children target)]
+                                 (if (java-file-boundary-reference? @ctx-holder (.getType element))
+                                   (csharp/invocation
+                                    (raw "global::DripSharp.Runtime.JavaFileBridge.AdaptArray") [node])
+                                   node))
                                (raw "[")
                                (child-node children (.getIndexExpression element))
                                (raw "]")])]
@@ -7477,7 +7600,12 @@
        :emit
        (fn [{:keys [^CtArrayWrite element children]}]
          {:node
-          (sequence-node [(child-node children (.getTarget element))
+          (sequence-node [(let [target (.getTarget element)
+                                     node (child-node children target)]
+                                 (if (java-file-boundary-reference? @ctx-holder (.getType element))
+                                   (csharp/invocation
+                                    (raw "global::DripSharp.Runtime.JavaFileBridge.AdaptArray") [node])
+                                   node))
                           (raw "[")
                           (child-node children (.getIndexExpression element))
                           (raw "]")])})}
@@ -9724,24 +9852,61 @@
         words (method-words ctx owner method)
         formals (vec (.getFormalCtTypeParameters method))
         lifted (wildcard-method-type-parameters method)
+        boundary? (java-file-public-executable? ctx method)
+        api-ctx (cond-> ctx boundary? (assoc :java-file-api? true))
+        core-name (str "__JavaFile_" name)
+        core-node
+        (when (and boundary? body-node)
+          (csharp/declaration
+           (sequence-node
+            [(raw (str "internal "
+                       (when (some #{"new" "override"} words) "new ")
+                       (when (.hasModifier method ModifierKind/STATIC) "static ")))
+             (method-return-type-node ctx owner method)
+             (raw (str " " core-name))
+             (method-formals-node method lifted)
+             (raw "(")
+             (sequence-node (mapv #(parameter-node ctx % lifted) (.getParameters method)) ", ")
+             (raw ")") (constraints-node ctx formals)
+             (lifted-wildcard-constraints-node ctx lifted)])
+           body-node
+           {:declaration-kind :java-file-core :name core-name}))
+        boundary-body
+        (when core-node
+          (let [call (sequence-node
+                      [(raw core-name)
+                       (method-formals-node method lifted)
+                       (raw "(")
+                       (sequence-node
+                        (mapv #(java-file-conversion
+                                ctx "Import" (.getType ^CtParameter %)
+                                (raw (identifier (.getSimpleName ^CtParameter %))))
+                              (.getParameters method)) ", ")
+                       (raw ")")])]
+            (csharp/block
+             [(sequence-node
+               [(when-not (= "void" (.getQualifiedName (.getType method))) (raw "return "))
+                (java-file-conversion api-ctx "Export" (.getType method) call)
+                (raw ";")])])) )
         id (register-member! ctx owner method name rule nil (first words))
         method-node
         (csharp/with-source
           (csharp/declaration
            (sequence-node
-            [(raw (str (str/join " " words) " "))
-             (method-return-type-node ctx owner method)
+            [(when core-node (raw "[global::DripSharp.Runtime.JavaFileBoundary]\n"))
+             (raw (str (str/join " " words) " "))
+             (method-return-type-node api-ctx owner method)
              (raw (str " " name))
              (method-formals-node method lifted)
              (raw "(")
              (sequence-node
-              (mapv #(parameter-node ctx % lifted) (.getParameters method)) ", ")
+              (mapv #(parameter-node api-ctx % lifted) (.getParameters method)) ", ")
              (raw ")")
              (when-not (some #{"override"} words)
                (sequence-node
                 [(constraints-node ctx formals)
                  (lifted-wildcard-constraints-node ctx lifted)]))])
-           body-node
+           (if core-node boundary-body body-node)
            {:declaration-kind :method
             :name name
             :source-name (.getSimpleName method)
@@ -9750,7 +9915,7 @@
           (source-ref method rule
                       {:declaration-id id :declaration-kind :method}))]
     (sequence-node
-     (into [method-node]
+     (into (cond-> [method-node] core-node (conj core-node))
            (concat (map #(emit-root ctx %) local-types)
                    anonymous-types))
      "\n\n")))
@@ -10073,6 +10238,27 @@
         (if (.isImplicit constructor)
           (implicit-constructor-visibility owner constructor)
           (member-visibility owner constructor "internal"))
+        file-boundary? (java-file-public-executable? ctx constructor)
+        file-boundary-node
+        (when file-boundary?
+          (sequence-node
+           [(raw (str emitted-visibility " " name "("))
+            (when (non-static-member-class? owner)
+              (sequence-node
+               [(owner-type-node ctx (.getDeclaringType owner))
+                (raw (str " " (:outer-field-name ctx) ", "))]))
+            (sequence-node
+             (mapv #(parameter-node (assoc ctx :java-file-api? true) %)
+                   (.getParameters constructor)) ", ")
+            (raw ") : this(")
+            (when (non-static-member-class? owner)
+              (raw (str (:outer-field-name ctx) ", ")))
+            (sequence-node
+             (mapv #(java-file-conversion
+                     ctx "Import" (.getType ^CtParameter %)
+                     (raw (identifier (.getSimpleName ^CtParameter %))))
+                   (.getParameters constructor)) ", ")
+            (raw ") {}")]))
         id (register-member! ctx owner constructor name rule nil emitted-visibility)
         body (.getBody constructor)
         first-statement (some-> body .getStatements first)
@@ -10174,7 +10360,7 @@
           (csharp/with-source
             (csharp/declaration
              (sequence-node
-              [(raw (str emitted-visibility " " name "("))
+              [(raw (str (if file-boundary? "internal" emitted-visibility) " " name "("))
                (sequence-node
                 (cond-> (mapv #(parameter-node ctx %)
                               (.getParameters constructor))
@@ -10199,7 +10385,7 @@
             (source-ref constructor rule
                         {:declaration-id id :declaration-kind :constructor}))]
       (sequence-node
-       (into [constructor-declaration]
+       (into (cond-> [constructor-declaration] file-boundary-node (conj file-boundary-node))
              (concat (map #(emit-root ctx %) local-types)
                      anonymous-types))
        "\n\n"))))
@@ -10463,7 +10649,9 @@
              [(raw "<")
               (sequence-node (mapv #(type-node ctx %) arguments) ", ")
               (raw ">")]))
-          (raw "(") expression-node (raw ")")]))
+          (raw "(") expression-node
+          (when (java-file-executable? ctx functional-method) (raw ", true"))
+          (raw ")")]))
       :else expression-node)))
 
 (defn- functional-delegate-type-node [ctx ^CtMethod method]
@@ -10531,7 +10719,39 @@
                (raw " ")
                (translated-node default-body-ctx (.getBody candidate))])))
          default-methods)]
-    (sequence-node
+    (if (java-file-executable? ctx method)
+      (let [api-ctx (assoc ctx :java-file-api? true)
+            api-delegate (functional-delegate-type-node api-ctx method)
+            name (method-name ctx interface method)
+            implementation (sequence-node
+                            [(raw "this.implementation(")
+                             (sequence-node arguments ", ") (raw ")")])]
+        (sequence-node
+         [(raw (str visibility " sealed class " adapter-name " : "))
+          (owner-type-node ctx interface)
+          (raw " {\nprivate readonly ") delegate-type (raw " implementation;\n")
+          (raw (str "internal " adapter-name "(")) delegate-type
+          (raw " implementation, bool internalPath) { this.implementation = implementation; }\n")
+          (raw (str "public " adapter-name "(")) api-delegate
+          (raw " implementation) { this.implementation = global::DripSharp.Runtime.JavaFileBridge.Import<")
+          delegate-type (raw ">(implementation); }\n")
+          (raw "[global::DripSharp.Runtime.JavaFileBoundary]\npublic ")
+          (declaration-type-node api-ctx method (.getType method))
+          (raw (str " " name "("))
+          (sequence-node (mapv #(parameter-node api-ctx %) parameters) ", ")
+          (raw ") { ") (when-not void? (raw "return "))
+          (java-file-conversion
+           api-ctx "Export" (.getType method)
+           (sequence-node
+            [(raw (str "__JavaFile_" name "("))
+             (sequence-node (mapv #(java-file-conversion ctx "Import" (.getType ^CtParameter %1) %2)
+                                  parameters arguments) ", ") (raw ")")]))
+          (raw "; }\ninternal ")
+          (declaration-type-node ctx method (.getType method))
+          (raw (str " __JavaFile_" name "(")) (sequence-node parameter-nodes ", ")
+          (raw ") { ") (when-not void? (raw "return ")) implementation
+          (raw "; }\n") (sequence-node default-nodes "\n\n") (raw "\n}")]))
+      (sequence-node
      [(raw (str visibility " sealed class " adapter-name))
       (type-formals-node ctx interface)
       (raw " : ") (owner-type-node ctx interface) (raw " {\nprivate readonly ")
@@ -10547,7 +10767,7 @@
       (when (seq default-nodes)
         (sequence-node [(raw "\n\n")
                         (sequence-node default-nodes "\n\n")]))
-      (raw "\n}")])))
+      (raw "\n}")]))))
 
 (defn- generated-outer-field-name [^CtType type]
   (let [reserved (->> (concat (.getFields type) (.getMethods type))

@@ -119,12 +119,15 @@
       (is (= expected (get-in @destinations [id :package-dependencies]))))
     (doseq [[id expected] expected-project-references]
       (is (= expected (get-in @destinations [id :project-references]))))
-    (is (= #{"DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"
+      (is (= #{"DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight" "DripSharp.PdfCarton.Fonts"
              "DripSharp.PdfCarton.Tests"}
            (get-in @destinations [:io :friend-assemblies])))
     (is (= #{"DripSharp.PdfCarton.Preflight" "DripSharp.PdfCarton.Tests"}
            (get-in @destinations [:pdfbox :friend-assemblies])))
-    (doseq [id [:fontbox :xmpbox :preflight]]
+    (is (= #{"DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"
+             "DripSharp.PdfCarton.Tests"}
+           (get-in @destinations [:fontbox :friend-assemblies])))
+    (doseq [id [:xmpbox :preflight]]
       (is (= #{"DripSharp.PdfCarton.Tests"}
              (get-in @destinations [id :friend-assemblies]))))
     (is (= "DripSharp.PdfCarton.Runtime.Fonts"
@@ -165,7 +168,7 @@
       (is (= approved-package-metadata
              (select-keys (:package destination)
                           (keys approved-package-metadata)))))
-    (is (= #{"3.0.8-alpha.4"}
+    (is (= #{"3.0.8-alpha.5"}
            (set (map :version (vals (:packages @baseline))))))
     (is (= (set (keys (:packages @baseline)))
            (set (keys (get-in @target [:publication :nuget :packages])))))))

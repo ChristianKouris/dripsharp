@@ -1,0 +1,11 @@
+# Java file path compatibility
+
+Translated `java.io.File` values use an internal immutable pathname representation. The compatibility reference is Java 17, including the pre-JDK-25 behavior in which an empty pathname is not an existing directory. Construction normalizes separators according to the host filesystem without requiring the file to exist or resolving relative paths against the current directory. Whitespace is a literal part of a name. An embedded NUL remains representable until a filesystem or NIO operation examines it.
+
+File queries distinguish failure results from throwing operations: an empty or NUL-containing pathname does not exist, is not a directory, and is not readable or writable. Opening it fails with a file-opening exception; converting NUL to a NIO path fails with a path exception. Constructor null and URI validation retain their distinct Java contracts. The direct compatibility differential runs on Java 17; the wider PdfCarton family oracle continues to use its existing Java 25 configuration.
+
+Public generated APIs retain `System.IO.FileInfo`, including generic collection elements and delegate signatures. Generated internal implementation members carry Java pathnames without exporting them when one translated method calls another. Dispatch checks the public override so external .NET implementations still receive the documented public types. Boundary adapters import ordinary `FileInfo` objects and export representable paths. Exporting an empty or otherwise unrepresentable pathname throws `ArgumentException`; no sentinel, trimming, or null substitution is permitted. Null file references remain null references across adapters.
+
+PdfCarton hosts the shared pathname and boundary adapters in its IO assembly. Fonts, PDFBox, and Preflight use internal access to that representation; independent modules retain their own support. No additional public type or assembly is introduced.
+
+Regression evidence lives in the direct JavaCompat differential, generated translation fixtures, the shipped release smoke suite, and the isolated single-package consumer. The font-cache regression creates fresh product statics per case and checks both public font-dependent PDF creation and the selected cache directory.

@@ -8382,15 +8382,15 @@
          first-source
          (str "new global::System.IO.BufferedStream("
               "global::DripSharp.Runtime.JavaCompat.OpenInputStream("
-              "new global::DripSharp.Runtime.JavaPath(file.FullName)))")))
+              "global::DripSharp.Runtime.JavaCompat.FileToPath(file)))")))
     (is (contains-csharp?
          first-source
          (str "return global::DripSharp.Runtime.JavaCompat.OpenInputStream("
-              "new global::DripSharp.Runtime.JavaPath(file.FullName), new object());")))
+              "global::DripSharp.Runtime.JavaCompat.FileToPath(file), new object());")))
     (is (contains-csharp?
          first-source
          (str "return global::DripSharp.Runtime.JavaCompat.NewOutputStream("
-              "new global::DripSharp.Runtime.JavaPath(file.FullName));")))
+              "global::DripSharp.Runtime.JavaCompat.FileToPath(file));")))
     (is (contains-csharp?
          first-source
          (str "return global::DripSharp.Runtime.JavaCompat.NewFileWriter("
@@ -8837,3 +8837,100 @@
                                :command ["dotnet" "build" (:project-file emission)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest java-file-values-survive-internal-calls-and-preserve-native-api
+  (let [fixture
+        (model!
+         {"example/FileSource.java"
+          "package example; import java.io.File; public interface FileSource { File get(String path); }"
+          "example/GenericFileSource.java"
+          "package example; import java.io.File; public interface GenericFileSource { <T> File echo(File file,T extra); }"
+          "example/DeleteQuery.java"
+          "package example; import java.io.File; public interface DeleteQuery { boolean apply(File file); }"
+          "example/FileValues.java"
+          (str "package example; import java.io.File; import java.util.*; "
+               "public class FileValues implements FileSource { "
+               "private File stored; public FileValues(File file) { stored=file; } "
+               "public File get(String path) { return new File(path); } "
+               "public File stored() { return stored; } "
+               "public static <T> File generic(File file, T extra) { return file; } "
+               "public List<File> echo(List<File> files) { files.add(new File(\"inserted\")); return files; } "
+               "public Set<File> echoSet(Set<File> files) { return files; } "
+               "public Set<File> createFiles() { Set<File> s=new HashSet<>(); s.add(new File(\"relative\")); return s; } "
+               "public Map<String,File> createMap() { Map<String,File> m=new HashMap<>(); m.put(\"first\",new File(\"relative\")); return m; } "
+               "public Map<String,File> echoMap(Map<String,File> files) { return files; } "
+               "private File[] array; public File[] echoArray(File[] files) { array=files; return files; } "
+               "public void arrayWrite() { array[0]=new File(\"updated\"); } "
+               "public String arrayRead() { return array[0].getName(); } "
+               "public static boolean callback(FileSource source) { return source.get(\"\").isDirectory(); } "
+               "public static boolean genericCallback(GenericFileSource source) { return source.echo(new File(\".\"),\"extra\").isDirectory(); } "
+               "public static class Derived extends FileValues { public Derived(File f){super(f);} "
+               "@Override public File get(String path) { return super.get(path); } } "
+               "public static boolean inspect(FileSource source, String path) { "
+               "File f=source.get(path); List<File> files=new ArrayList<>(); files.add(f); "
+               "return files.get(0).isDirectory(); } "
+               "public static boolean emptyWorks() { "
+               "FileValues v=new FileValues(new File(\"\")); "
+               "FileSource source = path -> new File(path); "
+               "FileSource reference = v::get; "
+               "DeleteQuery delete = File::delete; "
+               "java.util.function.Function<FileValues,File> unbound = FileValues::stored; "
+               "File uri = new File(java.net.URI.create(\"file:/a/../b\")); "
+               "File[] a={new File(\"\"),new File(\"bad\u0000path\")}; "
+               "return v.stored().getPath().equals(\"\") && !inspect(v, \"\") "
+               "&& generic(new File(\"\"), \"extra\").getPath().isEmpty() "
+               "&& new Derived(a[0]).get(\"\").getPath().equals(\"\") "
+               "&& uri.getPath().endsWith(\"a\"+File.separator+\"..\"+File.separator+\"b\") "
+               "&& !delete.apply(a[0]) && !callback(source) && !callback(reference) && unbound.apply(v).getPath().isEmpty() "
+               "&& v.echoArray(a)[1].getPath().length()==8; } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        consumer-root (temp-directory)
+        _ (write-sources!
+           consumer-root
+           {"Consumer.csproj"
+            (str "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup>"
+                 "<OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework>"
+                 "<Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors>"
+                 "</PropertyGroup><ItemGroup><ProjectReference Include=\""
+                 (paths/resolve-path (:project-root emission) (:project-file emission))
+                 "\" /></ItemGroup></Project>")
+            "Program.cs"
+            (str "using System; using System.IO; using System.Collections.Generic; using System.Linq; using Example.Java.Library;\n"
+                 "if (!FileValues.emptyWorks()) throw new Exception(\"Empty internal path lost\");\n"
+                 "var file=new FileInfo(\"ordinary\"); var value=new FileValues(file);\n"
+                 "if (value.stored().FullName != file.FullName) throw new Exception(\"Public file changed\");\n"
+                 "try { value.get(\"\"); throw new Exception(\"Empty path exported\"); } catch(ArgumentException) {}\n"
+                 "IList<FileInfo> list=new List<FileInfo>{file}; var returned=value.echo(list);\n"
+                 "returned.Add(new FileInfo(\"second\")); if(list.Count!=3) throw new Exception(\"List alias lost\");\n"
+                 "var array=new[]{file}; if(!ReferenceEquals(array,value.echoArray(array))) throw new Exception(\"Array identity lost\");\n"
+                 "value.arrayWrite(); if(array[0].Name!=\"updated\") throw new Exception(\"Array write lost\"); array[0]=new FileInfo(\"external\"); if(value.arrayRead()!=\"external\") throw new Exception(\"Array read lost\");\n"
+                 "var produced=value.createFiles(); if(!produced.Contains(produced.First())) throw new Exception(\"Export/import path identity lost\");\n"
+                 "var producedMap=value.createMap(); var keys=producedMap.Keys; producedMap[\"second\"]=file; if(keys.Count!=2) throw new Exception(\"Dictionary view detached\");\n"
+                 "var set=new HashSet<FileInfo>{file}; value.echoSet(set).Clear(); if(set.Count!=0) throw new Exception(\"Set alias lost\");\n"
+                 "var map=new Dictionary<string,FileInfo>{{\"file\",file}}; value.echoMap(map).Clear(); if(map.Count!=0) throw new Exception(\"Map alias lost\");\n"
+                 "if(!FileValues.callback(new ExplicitSource())) throw new Exception(\"Explicit callback bypassed\");\n"
+                 "if(!FileValues.genericCallback(new GenericSource())) throw new Exception(\"Generic explicit callback bypassed\");\n"
+                 "if(!FileValues.inspect(new Override(file), \"\")) throw new Exception(\"Override bypassed\");\n"
+                 "sealed class GenericSource : GenericFileSource { FileInfo GenericFileSource.echo<T>(FileInfo f,T extra)=>new FileInfo(Environment.CurrentDirectory); }\n"
+                 "sealed class ExplicitSource : FileSource { FileInfo FileSource.get(string p)=>new FileInfo(Environment.CurrentDirectory); }\n"
+                 "sealed class Override : FileValues { public Override(FileInfo f):base(f){} "
+                 "public override FileInfo get(string path) => new FileInfo(Environment.CurrentDirectory); }\n")})
+        result (process/run! {:directory consumer-root
+                              :command ["dotnet" "run" "--project" "Consumer.csproj"
+                                        "--configuration" "Release" "--verbosity:quiet"]})]
+    (is (zero? (:exit result)) (:output result))))
+
+(deftest destination-path-mappings-do-not-acquire-native-file-boundaries
+  (let [fixture (model! {"example/Paths.java"
+                         "package example; public class Paths { private java.io.File path; }"})
+        model (:model fixture)
+        owner (first (java/project-roots model))
+        reference (.getType (first (.getFields owner)))
+        context (mapping-context model (java/resolved-occurrence-index model))
+        path-context (assoc context :destination-type-mappings
+                            {"java.io.File" ["string" :dotnet.type/path]})]
+    (is (java-library/java-file-boundary-reference? context reference))
+    (is (not (java-library/java-file-boundary-reference? path-context reference)))
+    (is (= "string" (:text (dripsharp.csharp/render
+                            (java-library/type-node
+                             (assoc path-context :java-file-api? true) reference)))))))

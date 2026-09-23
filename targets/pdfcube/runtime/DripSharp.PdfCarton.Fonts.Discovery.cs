@@ -14,11 +14,12 @@ namespace DripSharp.Runtime;
 
 internal static class PdfCartonFontDiscovery
 {
-    internal static bool FileExists(FileInfo file)
+    internal static bool FileExists(JavaFile file)
     {
+        if (!file.Queryable) return false;
         try
         {
-            return File.Exists(file.FullName) || Directory.Exists(file.FullName);
+            return File.Exists(file.Pathname) || Directory.Exists(file.Pathname);
         }
         catch (Exception error) when (IsInaccessible(error))
         {
@@ -26,11 +27,12 @@ internal static class PdfCartonFontDiscovery
         }
     }
 
-    internal static bool FileIsDirectory(FileInfo file)
+    internal static bool FileIsDirectory(JavaFile file)
     {
+        if (!file.Queryable) return false;
         try
         {
-            return Directory.Exists(file.FullName);
+            return Directory.Exists(file.Pathname);
         }
         catch (Exception error) when (IsInaccessible(error))
         {
@@ -38,26 +40,27 @@ internal static class PdfCartonFontDiscovery
         }
     }
 
-    internal static bool FileCanRead(FileInfo file)
+    internal static bool FileCanRead(JavaFile file)
     {
+        if (!file.Queryable) return false;
         try
         {
-            if (Directory.Exists(file.FullName))
+            if (Directory.Exists(file.Pathname))
             {
                 using var entries = Directory
-                    .EnumerateFileSystemEntries(file.FullName)
+                    .EnumerateFileSystemEntries(file.Pathname)
                     .GetEnumerator();
                 _ = entries.MoveNext();
                 return true;
             }
 
-            if (!File.Exists(file.FullName))
+            if (!File.Exists(file.Pathname))
             {
                 return false;
             }
 
             using var stream = File.Open(
-                file.FullName,
+                file.Pathname,
                 FileMode.Open,
                 FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete);
@@ -69,8 +72,9 @@ internal static class PdfCartonFontDiscovery
         }
     }
 
-    internal static bool FileIsHidden(FileInfo file)
+    internal static bool FileIsHidden(JavaFile file)
     {
+        if (!file.Queryable) return false;
         if (file.Name.StartsWith(".", StringComparison.Ordinal))
         {
             return true;
@@ -79,7 +83,7 @@ internal static class PdfCartonFontDiscovery
         try
         {
             return FileExists(file) &&
-                (File.GetAttributes(file.FullName) & FileAttributes.Hidden) != 0;
+                (File.GetAttributes(file.Pathname) & FileAttributes.Hidden) != 0;
         }
         catch (Exception error) when (IsInaccessible(error))
         {
@@ -87,27 +91,28 @@ internal static class PdfCartonFontDiscovery
         }
     }
 
-    internal static FileInfo[]? FileListFiles(FileInfo directory) =>
+    internal static JavaFile[]? FileListFiles(JavaFile directory) =>
         FileListFiles(directory, Directory.EnumerateFileSystemEntries);
 
-    internal static Uri FileToUri(FileInfo file) =>
-        new(Path.GetFullPath(file.FullName), UriKind.Absolute);
+    internal static Uri FileToUri(JavaFile file) =>
+        JavaCompat.FileToUri(file);
 
     // Kept internal so package-only verification can exercise the inaccessible
     // directory path without publishing a filesystem abstraction.
-    internal static FileInfo[]? FileListFiles(
-        FileInfo directory,
+    internal static JavaFile[]? FileListFiles(
+        JavaFile directory,
         Func<string, IEnumerable<string>> enumerate)
     {
+        if (!directory.Queryable) return null;
         try
         {
-            if (!Directory.Exists(directory.FullName))
+            if (!Directory.Exists(directory.Pathname))
             {
                 return null;
             }
 
-            return enumerate(directory.FullName)
-                .Select(path => new FileInfo(path))
+            return enumerate(directory.Pathname)
+                .Select(path => new JavaFile(path))
                 .ToArray();
         }
         catch (Exception error) when (IsInaccessible(error))
@@ -119,5 +124,5 @@ internal static class PdfCartonFontDiscovery
     }
 
     private static bool IsInaccessible(Exception error) =>
-        error is UnauthorizedAccessException or IOException or SecurityException;
+        error is UnauthorizedAccessException or IOException or SecurityException or ArgumentException or NotSupportedException;
 }

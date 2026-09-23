@@ -175,6 +175,7 @@ internal static class Program
         yield return Observe("compression", CompressionContract());
         yield return Observe("crc32", Crc32Contract());
         yield return Observe("data-output", DataOutputContract());
+        yield return Observe("file-paths", FilePathsContract());
         yield return Observe("decimal-format", DecimalFormatContract());
         yield return Observe("message-digest", MessageDigestContract());
         yield return Observe("message-format", MessageFormatContract());
@@ -191,6 +192,75 @@ internal static class Program
 
     private static Observation Observe(string id, string value) =>
         new("behavior", id, value);
+
+    private static string FilePathsContract()
+    {
+        var values = new List<string>();
+        foreach (var path in new[] { "", "missing-file-path", "a//b/", "a/../b", "\0", " " })
+        {
+            var file = new JavaFile(path);
+            values.Add(Convert.ToBase64String(Encoding.UTF8.GetBytes(file.Pathname)));
+            values.Add(Convert.ToBase64String(Encoding.UTF8.GetBytes(file.Name)));
+            values.Add(file.Exists.ToString().ToLowerInvariant());
+            values.Add(file.IsDirectory.ToString().ToLowerInvariant());
+            values.Add(file.GetHashCode().ToString(CultureInfo.InvariantCulture));
+        }
+        foreach (string path in new[] { "/a/../b", "/a b", "/a#b", "/a%z", "/aé", "/a\0b" })
+            values.Add(JavaCompat.UriToString(JavaCompat.FileToUri(new JavaFile(path))));
+        foreach (string? parent in new string?[] { null, "", "a", "/" })
+            values.Add(new JavaFile(parent, "/b").Pathname);
+        try { _ = new JavaFile((string)null!); values.Add("accepted-null"); }
+        catch (NullReferenceException) { values.Add("null-rejected"); }
+        foreach (string path in new[] { "", "\0" })
+        {
+            try { _ = new JavaFile(path).OpenPath(); values.Add("opened"); }
+            catch (FileNotFoundException) { values.Add("open-rejected"); }
+            try { _ = new JavaFile(path).ToFileInfo(); throw new Exception("Unrepresentable file exported"); }
+            catch (ArgumentException) { }
+        }
+        foreach (string uri in new[] { "file:/a/../b", "file:///a%20b", "file:/a%00b", "file:/", "file://host/a", "file:/a?x", "file:/a#x", "file:a", "/a" })
+        {
+            try { values.Add(new JavaFile(new Uri(uri, UriKind.RelativeOrAbsolute)).Pathname); }
+            catch (ArgumentException) { values.Add("uri-rejected"); }
+            catch (UriFormatException) { values.Add("uri-rejected"); }
+        }
+        foreach (string? parent in new string?[] { null, "", "a", "/" })
+        {
+            values.Add(new JavaFile(parent is null ? null : new JavaFile(parent), "b").Pathname);
+            try { _ = new JavaFile(parent, (string)null!); values.Add("accepted-child"); }
+            catch (NullReferenceException) { values.Add("child-rejected"); }
+        }
+        var empty = new JavaFile("");
+        values.Add($"{Lower(JavaCompat.FileCanRead(empty))}:{Lower(JavaCompat.FileCanWrite(empty))}:{empty.Length}:{JavaCompat.FileLastModified(empty)}:{Lower(empty.ListFiles() is null)}");
+        values.Add(JavaCompat.FileToPath(empty).ToString());
+        try { _ = JavaCompat.FileToPath(new JavaFile("\0")); values.Add("path-accepted"); }
+        catch (ArgumentException) { values.Add("path-rejected"); }
+        try { _ = new JavaFile((Uri)null!); values.Add("accepted-null-uri"); }
+        catch (NullReferenceException) { values.Add("null-uri-rejected"); }
+        try { using var file = new JavaRandomAccessFile(new JavaFile(""), "bad"); values.Add("mode-accepted"); }
+        catch (ArgumentException) { values.Add("mode-rejected"); }
+        var command = OperatingSystem.IsWindows() ? new[] { "cmd.exe", "/c", "exit" } : new[] { "/bin/true" };
+        try { using var process = new JavaProcessBuilder(command).Directory(new JavaFile("")).Start(); values.Add("process-started"); }
+        catch (IOException) { values.Add("process-dir-rejected"); }
+        string root = Path.Combine(Path.GetTempPath(), "dripsharp-file-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string spaced = Path.Combine(root, " ");
+            Directory.CreateDirectory(spaced);
+            string ordinary = Path.Combine(root, "ordinary");
+            File.WriteAllText(ordinary, "abc");
+            var directory = new JavaFile(spaced);
+            var file = new JavaFile(ordinary);
+            values.Add(directory.IsDirectory.ToString().ToLowerInvariant());
+            values.Add(file.IsFile.ToString().ToLowerInvariant());
+            values.Add(file.Length.ToString(CultureInfo.InvariantCulture));
+            values.Add(new JavaFile(root).ListFiles()!.Length.ToString(CultureInfo.InvariantCulture));
+            if (!JavaFile.FromFileInfo(file.ToFileInfo())!.Equals(file)) throw new Exception("FileInfo roundtrip failed");
+        }
+        finally { Directory.Delete(root, true); }
+        return string.Join("|", values);
+    }
 
     private static string AtomicPrimitives()
     {

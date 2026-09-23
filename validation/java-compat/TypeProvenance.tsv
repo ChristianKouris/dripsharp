@@ -44,7 +44,10 @@ JavaDirectoryStream	java.nio.file.DirectoryStream	pdfcube,pkl,rawhttp,sqltrellis
 JavaEnumNameAttribute	java.lang.Enum	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaEnumNameAttribute
 JavaEnumOrdinalAttribute	java.lang.Enum	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaEnumOrdinalAttribute
 JavaExecutorService	java.util.concurrent.ExecutorService	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaExecutorService
+JavaFile	java.io.File	pdfcube,pkl,rawhttp,sqltrellis	behavior/file-paths,type-contract/JavaFile
 JavaFileAttribute	java.nio.file.attribute.FileAttribute	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaFileAttribute
+JavaFileBoundaryAttribute	java.lang.annotation.Annotation	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaFileBoundaryAttribute
+JavaFileBridge	java.io.File	pdfcube,pkl,rawhttp,sqltrellis	behavior/file-paths,type-contract/JavaFileBridge
 JavaFileChannel	java.nio.channels.FileChannel	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaFileChannel
 JavaFileChannelMapMode	java.nio.channels.FileChannel$MapMode	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaFileChannelMapMode
 JavaFileNotFoundException	java.io.FileNotFoundException	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaFileNotFoundException

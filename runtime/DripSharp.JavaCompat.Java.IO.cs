@@ -33,6 +33,570 @@ namespace DripSharp.Runtime;
 
 // JDK compatibility area: Java.IO
 
+#if !DRIPSHARP_SHARED_JAVA_FILE
+// A Java File is a pathname, not a validated CLR FileInfo. In particular the
+// empty pathname and embedded NUL survive construction on Java 17. Keep the
+// lexical value until the requested operation decides how to handle it.
+internal sealed class JavaFile : IEquatable<JavaFile>, IComparable<JavaFile>
+{
+    internal string Pathname { get; }
+    private readonly FileInfo? imported;
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<FileInfo, Tuple<JavaFile, string>> Imports = new();
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<JavaFile, FileInfo> Exports = new();
+    private static bool Windows => Path.DirectorySeparatorChar == '\\';
+
+    internal JavaFile(string pathname)
+    {
+        if (pathname is null) throw new NullReferenceException();
+        Pathname = Normalize(pathname);
+    }
+
+    private JavaFile(FileInfo file) : this(file.FullName) { imported = file; }
+
+    internal JavaFile(string? parent, string child)
+    {
+        if (child is null) throw new NullReferenceException();
+        child = Normalize(child);
+        if (parent is null) Pathname = child;
+        else
+        {
+            parent = Normalize(parent);
+            if (parent.Length == 0) parent = Windows ? "\\" : "/";
+            bool driveRelative = Windows && parent.Length == 2 && IsDrive(parent);
+            if (Windows && child.StartsWith("\\\\", StringComparison.Ordinal)) child = child.Substring(2);
+            else if (!driveRelative) child = child.TrimStart(Path.DirectorySeparatorChar);
+            Pathname = child.Length == 0 ? parent
+                : Normalize(driveRelative ? parent + child
+                    : parent.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar + child);
+        }
+    }
+
+    internal JavaFile(JavaFile? parent, string child) : this(parent?.Pathname, child) { }
+
+    internal JavaFile(Uri uri) : this(uri, uri is null ? "" : JavaCompat.UriToString(uri)) { }
+
+    internal JavaFile(Uri uri, string original)
+    {
+        if (uri is null) throw new NullReferenceException();
+        int colon = original.IndexOf(':');
+        string path = colon < 0 ? "" : original.Substring(colon + 1);
+        if (colon < 0 || !original.Substring(0, colon).Equals("file", StringComparison.OrdinalIgnoreCase) ||
+            !path.StartsWith("/", StringComparison.Ordinal) ||
+            path.IndexOf('?') >= 0 || path.IndexOf('#') >= 0 ||
+            (path.StartsWith("//", StringComparison.Ordinal) && !path.StartsWith("///", StringComparison.Ordinal)))
+            throw new ArgumentException("File URI must be absolute, hierarchical, and have no authority, query or fragment.", nameof(uri));
+        if (path.StartsWith("//", StringComparison.Ordinal)) path = path.Substring(2);
+        path = Uri.UnescapeDataString(path);
+        if (Windows && path.Length >= 3 && path[0] == '/' && path[2] == ':') path = path.Substring(1);
+        Pathname = Normalize(path);
+    }
+
+    private static string Normalize(string value)
+    {
+        if (Windows)
+        {
+            value = value.Replace('/', '\\');
+            string withoutRoot = value.TrimStart('\\');
+            if (IsDrive(withoutRoot)) value = withoutRoot;
+        }
+        char separator = Path.DirectorySeparatorChar;
+        var result = new StringBuilder(value.Length);
+        for (int index = 0; index < value.Length; index++)
+        {
+            char c = value[index];
+            if (c != separator || result.Length == 0 || result[result.Length - 1] != separator ||
+                (Windows && index == 1 && value[0] == separator)) result.Append(c);
+        }
+        int rootLength = Windows && result.Length >= 3 && result[1] == ':' && result[2] == separator
+            ? 3 : Windows && value.StartsWith("\\\\", StringComparison.Ordinal) ? 2 : 1;
+        if (result.Length > rootLength && result[result.Length - 1] == separator) result.Length--;
+        return result.ToString();
+    }
+
+    private static bool IsDrive(string path) => path.Length >= 2 && path[1] == ':' &&
+        (path[0] is >= 'A' and <= 'Z' or >= 'a' and <= 'z');
+    private int PrefixLength => Windows
+        ? Pathname.StartsWith("\\\\", StringComparison.Ordinal) ? 2
+        : Pathname.StartsWith("\\", StringComparison.Ordinal) ? 1
+        : IsDrive(Pathname) ? Pathname.Length > 2 && Pathname[2] == '\\' ? 3 : 2 : 0
+        : Pathname.StartsWith("/", StringComparison.Ordinal) ? 1 : 0;
+    internal bool Invalid => Pathname.IndexOf('\0') >= 0;
+    internal bool Queryable => Pathname.Length != 0 && !Invalid;
+    internal string Name
+    {
+        get
+        {
+            int prefix = PrefixLength;
+            int last = Pathname.LastIndexOf(Path.DirectorySeparatorChar);
+            return Pathname.Substring(Math.Max(prefix, last + 1));
+        }
+    }
+    internal string? Parent
+    {
+        get
+        {
+            int last = Pathname.LastIndexOf(Path.DirectorySeparatorChar);
+            int prefix = PrefixLength;
+            if (last < prefix) return prefix > 0 && Pathname.Length > prefix ? Pathname.Substring(0, prefix) : null;
+            return Pathname.Substring(0, last);
+        }
+    }
+    internal bool IsAbsolute => Windows
+        ? Pathname.StartsWith("\\\\", StringComparison.Ordinal) ||
+            (Pathname.Length >= 3 && Pathname[1] == ':' && Pathname[2] == '\\')
+        : Pathname.StartsWith("/", StringComparison.Ordinal);
+    internal string AbsolutePath
+    {
+        get
+        {
+            if (IsAbsolute) return Pathname;
+            string current = Environment.CurrentDirectory;
+            if (Pathname.Length == 0) return current;
+            if (Windows && PrefixLength == 1) return current.Substring(0, 2) + Pathname;
+            if (Windows && PrefixLength == 2)
+            {
+                string drive = Pathname.Substring(0, 2);
+                string directory = current.StartsWith(drive, StringComparison.OrdinalIgnoreCase)
+                    ? current : Path.GetFullPath(drive + ".");
+                return Normalize(directory + "\\" + Pathname.Substring(2));
+            }
+            return Normalize(current + Path.DirectorySeparatorChar + Pathname);
+        }
+    }
+    internal string FullName => AbsolutePath;
+    internal string? DirectoryName => Path.GetDirectoryName(AbsolutePath);
+
+    // Explicit .NET API boundary: never turn an unrepresentable Java path into
+    // an unrelated sentinel or current-directory FileInfo.
+    internal FileInfo ToFileInfo()
+    {
+        if (!Queryable) throw new ArgumentException("The Java pathname cannot be represented by System.IO.FileInfo.", "path");
+        try
+        {
+            string absolute = Path.GetFullPath(Pathname);
+            lock (Imports)
+            {
+                FileInfo native = imported is not null && imported.FullName == absolute
+                    ? imported : Exports.GetValue(this, file => new FileInfo(file.Pathname));
+                if (native.FullName != absolute)
+                {
+                    Exports.Remove(this);
+                    native = Exports.GetValue(this, file => new FileInfo(file.Pathname));
+                }
+                _ = Imports.GetValue(native, file => Tuple.Create(this, file.FullName));
+                return native;
+            }
+        }
+        catch (NotSupportedException error) { throw new ArgumentException("The Java pathname cannot be represented by System.IO.FileInfo.", "path", error); }
+        catch (PathTooLongException error) { throw new ArgumentException("The Java pathname cannot be represented by System.IO.FileInfo.", "path", error); }
+    }
+    internal static JavaFile? FromFileInfo(FileInfo? file)
+    {
+        if (file is null) return null;
+        lock (Imports)
+        {
+            var value = Imports.GetValue(file, f => Tuple.Create(new JavaFile(f), f.FullName));
+            if (value.Item2 == file.FullName) return value.Item1;
+            Imports.Remove(file);
+            return Imports.GetValue(file, f => Tuple.Create(new JavaFile(f), f.FullName)).Item1;
+        }
+    }
+    internal FileInfo OpenFileInfo()
+    {
+        try { return new FileInfo(OpenPath()); }
+        catch (global::System.ArgumentException error) { throw new FileNotFoundException(error.Message, Pathname, error); }
+        catch (NotSupportedException error) { throw new FileNotFoundException(error.Message, Pathname, error); }
+    }
+    internal bool Exists => Queryable && (File.Exists(Pathname) || Directory.Exists(Pathname));
+    internal bool IsDirectory => Queryable && Directory.Exists(Pathname);
+    internal bool IsFile => Queryable && File.Exists(Pathname);
+    internal long Length
+    {
+        get
+        {
+            if (!IsFile) return 0;
+            try { return new FileInfo(Pathname).Length; }
+            catch (IOException) { return 0; }
+            catch (UnauthorizedAccessException) { return 0; }
+        }
+    }
+    internal JavaFile[]? ListFiles()
+    {
+        if (!IsDirectory) return null;
+        try { return Directory.EnumerateFileSystemEntries(Pathname).Select(p => new JavaFile(p)).ToArray(); }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+    internal string OpenPath()
+    {
+        if (!Queryable) throw new FileNotFoundException("Invalid or empty Java pathname.", Pathname);
+        return Pathname;
+    }
+    public override string ToString() => Pathname;
+    public bool Equals(JavaFile? other) => other is not null &&
+        string.Equals(Pathname, other.Pathname, Windows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    public override bool Equals(object? other) => other is JavaFile file && Equals(file);
+    public override int GetHashCode()
+    {
+        int hash = 0;
+        foreach (char c in Windows ? Pathname.ToLowerInvariant() : Pathname)
+            hash = unchecked(31 * hash + c);
+        return hash ^ 1234321;
+    }
+    public int CompareTo(JavaFile? other)
+    {
+        if (other is null) throw new NullReferenceException();
+        string left = Windows ? Pathname.ToLowerInvariant() : Pathname;
+        string right = Windows ? other.Pathname.ToLowerInvariant() : other.Pathname;
+        for (int i = 0; i < Math.Min(left.Length, right.Length); i++)
+            if (left[i] != right[i]) return left[i] - right[i];
+        return left.Length - right.Length;
+    }
+}
+
+[AttributeUsage(AttributeTargets.Method, Inherited = false)]
+internal sealed class JavaFileBoundaryAttribute : Attribute { }
+
+// Public APIs retain FileInfo while calls between translated methods carry
+// JavaFile values. Dispatch consults the public override first, so an external
+// subclass or interface implementation remains an ordinary .NET extension.
+internal static class JavaFileBridge
+{
+    internal static T Import<T>(object? value) => (T)ConvertValue(value, typeof(T))!;
+    internal static T Export<T>(object? value) => (T)ConvertValue(value, typeof(T))!;
+
+    private interface IProjection { object Source { get; } }
+    private sealed class ListProjection<TSource, TDestination> : IList<TDestination>, IProjection
+    {
+        private readonly IList<TSource> source;
+        public ListProjection(object source) { this.source = (IList<TSource>)source; }
+        public object Source => source;
+        public TDestination this[int index]
+        {
+            get => Import<TDestination>(source[index]);
+            set => source[index] = Import<TSource>(value);
+        }
+        public int Count => source.Count;
+        public bool IsReadOnly => source.IsReadOnly;
+        public void Add(TDestination item) => source.Add(Import<TSource>(item));
+        public void Clear() => source.Clear();
+        public bool Contains(TDestination item) => IndexOf(item) >= 0;
+        public void CopyTo(TDestination[] array, int index)
+        {
+            for (int i = 0; i < Count; i++) array[index + i] = this[i];
+        }
+        public IEnumerator<TDestination> GetEnumerator()
+        {
+            foreach (TSource item in source) yield return Import<TDestination>(item);
+        }
+        public int IndexOf(TDestination item)
+        {
+            var comparer = EqualityComparer<TDestination>.Default;
+            for (int i = 0; i < Count; i++) if (comparer.Equals(this[i], item)) return i;
+            return -1;
+        }
+        public void Insert(int index, TDestination item) => source.Insert(index, Import<TSource>(item));
+        public bool Remove(TDestination item)
+        {
+            int index = IndexOf(item);
+            if (index < 0) return false;
+            RemoveAt(index);
+            return true;
+        }
+        public void RemoveAt(int index) => source.RemoveAt(index);
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private sealed class EnumerableProjection<TSource, TDestination> : IEnumerable<TDestination>, IProjection
+    {
+        private readonly IEnumerable<TSource> source;
+        public EnumerableProjection(object source) { this.source = (IEnumerable<TSource>)source; }
+        public object Source => source;
+        public IEnumerator<TDestination> GetEnumerator() => source.Select(value => Import<TDestination>(value)).GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+    private sealed class CollectionProjection<TSource, TDestination> : ICollection<TDestination>, IProjection
+    {
+        private readonly ICollection<TSource> source;
+        public CollectionProjection(object source) { this.source = (ICollection<TSource>)source; }
+        public object Source => source;
+        public int Count => source.Count;
+        public bool IsReadOnly => source.IsReadOnly;
+        public void Add(TDestination item) => source.Add(Import<TSource>(item));
+        public void Clear() => source.Clear();
+        public bool Contains(TDestination item) => source.Contains(Import<TSource>(item));
+        public bool Remove(TDestination item) => source.Remove(Import<TSource>(item));
+        public void CopyTo(TDestination[] array, int index) { foreach (var item in this) array[index++] = item; }
+        public IEnumerator<TDestination> GetEnumerator() => source.Select(value => Import<TDestination>(value)).GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private sealed class SetProjection<TSource, TDestination> : ISet<TDestination>, IProjection
+    {
+        private readonly ISet<TSource> source;
+        public SetProjection(object source) { this.source = (ISet<TSource>)source; }
+        public object Source => source;
+        public int Count => source.Count;
+        public bool IsReadOnly => source.IsReadOnly;
+        public bool Add(TDestination item) => source.Add(Import<TSource>(item));
+        void ICollection<TDestination>.Add(TDestination item) => Add(item);
+        public void Clear() => source.Clear();
+        public bool Contains(TDestination item) => source.Contains(Import<TSource>(item));
+        public bool Remove(TDestination item) => source.Remove(Import<TSource>(item));
+        public void CopyTo(TDestination[] array, int index) { foreach (var item in this) array[index++] = item; }
+        public IEnumerator<TDestination> GetEnumerator() => source.Select(value => Import<TDestination>(value)).GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+        private static IEnumerable<TSource> Adapt(IEnumerable<TDestination> values) => values.Select(value => Import<TSource>(value));
+        public void ExceptWith(IEnumerable<TDestination> other) => source.ExceptWith(Adapt(other));
+        public void IntersectWith(IEnumerable<TDestination> other) => source.IntersectWith(Adapt(other));
+        public void SymmetricExceptWith(IEnumerable<TDestination> other) => source.SymmetricExceptWith(Adapt(other));
+        public void UnionWith(IEnumerable<TDestination> other) => source.UnionWith(Adapt(other));
+        public bool IsProperSubsetOf(IEnumerable<TDestination> other) => source.IsProperSubsetOf(Adapt(other));
+        public bool IsProperSupersetOf(IEnumerable<TDestination> other) => source.IsProperSupersetOf(Adapt(other));
+        public bool IsSubsetOf(IEnumerable<TDestination> other) => source.IsSubsetOf(Adapt(other));
+        public bool IsSupersetOf(IEnumerable<TDestination> other) => source.IsSupersetOf(Adapt(other));
+        public bool Overlaps(IEnumerable<TDestination> other) => source.Overlaps(Adapt(other));
+        public bool SetEquals(IEnumerable<TDestination> other) => source.SetEquals(Adapt(other));
+    }
+
+    private sealed class DictionaryProjection<TSK, TSV, TDK, TDV> : IDictionary<TDK, TDV>, IProjection
+        where TSK : notnull where TDK : notnull
+    {
+        private readonly IDictionary<TSK, TSV> source;
+        public DictionaryProjection(object source) { this.source = (IDictionary<TSK, TSV>)source; }
+        public object Source => source;
+        public TDV this[TDK key] { get => Import<TDV>(source[Import<TSK>(key)]); set => source[Import<TSK>(key)] = Import<TSV>(value); }
+        public ICollection<TDK> Keys => new CollectionProjection<TSK, TDK>(source.Keys);
+        public ICollection<TDV> Values => new CollectionProjection<TSV, TDV>(source.Values);
+        public int Count => source.Count;
+        public bool IsReadOnly => source.IsReadOnly;
+        public void Add(TDK key, TDV value) => source.Add(Import<TSK>(key), Import<TSV>(value));
+        public bool ContainsKey(TDK key) => source.ContainsKey(Import<TSK>(key));
+        public bool Remove(TDK key) => source.Remove(Import<TSK>(key));
+        public bool TryGetValue(TDK key, out TDV value)
+        {
+            bool found = source.TryGetValue(Import<TSK>(key), out var item);
+            value = found ? Import<TDV>(item) : default!;
+            return found;
+        }
+        public void Add(KeyValuePair<TDK, TDV> item) => Add(item.Key, item.Value);
+        public void Clear() => source.Clear();
+        public bool Contains(KeyValuePair<TDK, TDV> item) => TryGetValue(item.Key, out var value) && EqualityComparer<TDV>.Default.Equals(value, item.Value);
+        public bool Remove(KeyValuePair<TDK, TDV> item) => Contains(item) && Remove(item.Key);
+        public void CopyTo(KeyValuePair<TDK, TDV>[] array, int index) { foreach (var item in this) array[index++] = item; }
+        public IEnumerator<KeyValuePair<TDK, TDV>> GetEnumerator() => source.Select(p => new KeyValuePair<TDK, TDV>(Import<TDK>(p.Key), Import<TDV>(p.Value))).GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private sealed class ArrayLink
+    {
+        internal readonly Dictionary<Type, Array> Arrays = new();
+        internal readonly Dictionary<Type, object?[]> Observed = new();
+        internal void Add(Array array)
+        {
+            Arrays.Add(array.GetType(), array);
+            Observed.Add(array.GetType(), array.Cast<object?>().ToArray());
+            ArrayLinks.Add(array, this);
+        }
+        internal void Synchronize(Array preferred)
+        {
+            foreach (Array source in new[] { preferred }.Concat(Arrays.Values.Where(a => !ReferenceEquals(a, preferred))))
+            {
+                object?[] observed = Observed[source.GetType()];
+                for (int i = 0; i < source.Length; i++)
+                {
+                    object? value = source.GetValue(i);
+                    if (ReferenceEquals(value, observed[i])) continue;
+                    foreach (Array destination in Arrays.Values)
+                    {
+                        object? adapted = ConvertValue(value, destination.GetType().GetElementType()!);
+                        destination.SetValue(adapted, i);
+                        Observed[destination.GetType()][i] = adapted;
+                    }
+                }
+            }
+        }
+    }
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Array, ArrayLink> ArrayLinks = new();
+    private static readonly object ArrayLock = new();
+    internal readonly struct ArrayView<T>
+    {
+        private readonly T[] source;
+        internal ArrayView(T[] source) { this.source = source; }
+        internal T this[int index]
+        {
+            get { SynchronizeArray(source); return source[index]; }
+            set { source[index] = value; SynchronizeArray(source); }
+        }
+    }
+    internal static ArrayView<T> AdaptArray<T>(T[] source) => new(source ?? throw new NullReferenceException());
+    internal static void SynchronizeArray(Array source)
+    {
+        lock (ArrayLock) if (ArrayLinks.TryGetValue(source, out var link)) link.Synchronize(source);
+    }
+
+    private static object? ConvertValue(object? value, Type destination)
+    {
+        if (value is null) return null;
+        if (destination.IsInstanceOfType(value)) return value;
+        if (value is IProjection projection && destination.IsInstanceOfType(projection.Source)) return projection.Source;
+        if (destination == typeof(JavaFile) && value is FileInfo native) return JavaFile.FromFileInfo(native);
+        if (destination == typeof(FileInfo) && value is JavaFile file) return file.ToFileInfo();
+        if (destination.IsArray && value is Array array)
+        {
+            lock (ArrayLock)
+            {
+                if (!ArrayLinks.TryGetValue(array, out var link))
+                {
+                    link = new ArrayLink();
+                    link.Add(array);
+                }
+                link.Synchronize(array);
+                if (link.Arrays.TryGetValue(destination, out var existing)) return existing;
+                Type element = destination.GetElementType()!;
+                var result = Array.CreateInstance(element, array.Length);
+                for (int i = 0; i < array.Length; i++) result.SetValue(ConvertValue(array.GetValue(i), element), i);
+                link.Add(result);
+                return result;
+            }
+        }
+        if (typeof(Delegate).IsAssignableFrom(destination) && value is Delegate callback)
+        {
+            var signature = destination.GetMethod("Invoke")!;
+            var sourceSignature = callback.GetType().GetMethod("Invoke")!;
+            var sourceParameters = sourceSignature.GetParameters();
+            var parameters = signature.GetParameters().Select(p =>
+                System.Linq.Expressions.Expression.Parameter(p.ParameterType, p.Name)).ToArray();
+            var converter = typeof(JavaFileBridge).GetMethod(nameof(ConvertValue), BindingFlags.Static | BindingFlags.NonPublic)!;
+            var arguments = parameters.Select((p, i) =>
+                System.Linq.Expressions.Expression.Convert(
+                    System.Linq.Expressions.Expression.Call(converter,
+                        System.Linq.Expressions.Expression.Convert(p, typeof(object)),
+                        System.Linq.Expressions.Expression.Constant(sourceParameters[i].ParameterType)),
+                    sourceParameters[i].ParameterType));
+            System.Linq.Expressions.Expression body = System.Linq.Expressions.Expression.Invoke(
+                System.Linq.Expressions.Expression.Constant(callback), arguments);
+            if (signature.ReturnType != typeof(void))
+                body = System.Linq.Expressions.Expression.Convert(
+                    System.Linq.Expressions.Expression.Call(converter,
+                        System.Linq.Expressions.Expression.Convert(body, typeof(object)),
+                        System.Linq.Expressions.Expression.Constant(signature.ReturnType)), signature.ReturnType);
+            return System.Linq.Expressions.Expression.Lambda(destination, body, parameters).Compile();
+        }
+        if (destination.IsGenericType)
+        {
+            Type definition = destination.GetGenericTypeDefinition();
+            Type? Find(Type definitionToFind) => value.GetType().GetInterfaces().FirstOrDefault(t => t.IsGenericType && t.GetGenericTypeDefinition() == definitionToFind);
+            Type? sourceType;
+            if (definition == typeof(IDictionary<,>) && (sourceType = Find(typeof(IDictionary<,>))) is not null)
+                return Activator.CreateInstance(typeof(DictionaryProjection<,,,>).MakeGenericType(
+                    sourceType.GetGenericArguments().Concat(destination.GetGenericArguments()).ToArray()), value);
+            if ((definition == typeof(ISet<>) || definition == typeof(ICollection<>) || definition == typeof(IEnumerable<>)) &&
+                (sourceType = Find(typeof(ISet<>))) is not null)
+                return Activator.CreateInstance(typeof(SetProjection<,>).MakeGenericType(
+                    sourceType.GetGenericArguments()[0], destination.GetGenericArguments()[0]), value);
+            if (definition == typeof(IList<>) || definition == typeof(ICollection<>) || definition == typeof(IEnumerable<>))
+            {
+                Type? list = value.GetType().GetInterfaces().FirstOrDefault(t => t.IsGenericType && t.GetGenericTypeDefinition() == typeof(IList<>));
+                if (list is not null)
+                    return Activator.CreateInstance(typeof(ListProjection<,>).MakeGenericType(
+                        list.GetGenericArguments()[0], destination.GetGenericArguments()[0]), value);
+                if ((sourceType = Find(typeof(ICollection<>))) is not null)
+                    return Activator.CreateInstance(typeof(CollectionProjection<,>).MakeGenericType(
+                        sourceType.GetGenericArguments()[0], destination.GetGenericArguments()[0]), value);
+                if (definition == typeof(IEnumerable<>) && (sourceType = Find(typeof(IEnumerable<>))) is not null)
+                    return Activator.CreateInstance(typeof(EnumerableProjection<,>).MakeGenericType(
+                        sourceType.GetGenericArguments()[0], destination.GetGenericArguments()[0]), value);
+            }
+        }
+        throw new InvalidCastException($"Cannot adapt Java File boundary from {value.GetType()} to {destination}.");
+    }
+
+    internal static void Call(object target, string name, Type[] parameters, object?[] arguments) =>
+        Invoke(target, name, parameters, arguments, typeof(void));
+    internal static T Call<T>(object target, string name, Type[] parameters, object?[] arguments) =>
+        Import<T>(Invoke(target, name, parameters, arguments, PublicType(typeof(T))));
+
+    private static object? Invoke(object target, string name, Type[] parameters, object?[] arguments, Type result)
+    {
+        if (target is null) throw new NullReferenceException();
+        Type type = target as Type ?? target.GetType();
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+        MethodInfo? selected = type.GetMethod(name, flags, null, parameters, null)
+            ?? GenericMethod(type.GetMethods(flags), name, parameters, result);
+        if (selected is null && !type.IsInterface)
+        {
+            foreach (Type contract in type.GetInterfaces())
+            {
+                MethodInfo? member = contract.GetMethod(name, parameters)
+                    ?? GenericMethod(contract.GetMethods(), name, parameters, result);
+                if (member is null) continue;
+                var map = type.GetInterfaceMap(contract);
+                MethodInfo definition = member.IsGenericMethod ? member.GetGenericMethodDefinition() : member;
+                selected = map.TargetMethods[Array.IndexOf(map.InterfaceMethods, definition)];
+                if (selected.IsGenericMethodDefinition) selected = selected.MakeGenericMethod(member.GetGenericArguments());
+                break;
+            }
+        }
+        MethodInfo method = selected ?? throw new MissingMethodException(type.FullName, name);
+        if (method.IsDefined(typeof(JavaFileBoundaryAttribute), false))
+        {
+            Type[] genericArguments = method.IsGenericMethod ? method.GetGenericArguments() : Type.EmptyTypes;
+            method = method.DeclaringType!.GetMethods(flags | BindingFlags.DeclaredOnly)
+                .Where(m => m.Name == "__JavaFile_" + name && m.GetParameters().Length == parameters.Length)
+                .Select(m => m.IsGenericMethodDefinition ? m.MakeGenericMethod(genericArguments) : m)
+                .Single(m => m.GetParameters().Select(p => PublicType(p.ParameterType)).SequenceEqual(parameters));
+        }
+        var formal = method.GetParameters();
+        var adapted = arguments.Select((value, index) => ConvertValue(value, formal[index].ParameterType)).ToArray();
+        try { return method.Invoke(method.IsStatic ? null : target, adapted); }
+        catch (TargetInvocationException error) when (error.InnerException is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.InnerException).Throw();
+            throw;
+        }
+    }
+
+    private static MethodInfo? GenericMethod(IEnumerable<MethodInfo> methods, string name, Type[] parameters, Type result)
+    {
+        foreach (MethodInfo method in methods.Where(m => m.Name == name && m.IsGenericMethodDefinition))
+        {
+            var formal = method.GetParameters();
+            if (formal.Length != parameters.Length) continue;
+            var inferred = new Dictionary<Type, Type>();
+            if (!formal.Select((p, index) => MatchType(p.ParameterType, parameters[index], inferred)).All(v => v)) continue;
+            if (method.GetGenericArguments().Any(t => !inferred.ContainsKey(t)))
+                _ = MatchType(method.ReturnType, result, inferred);
+            if (method.GetGenericArguments().All(inferred.ContainsKey))
+                return method.MakeGenericMethod(method.GetGenericArguments().Select(t => inferred[t]).ToArray());
+        }
+        return null;
+    }
+    private static bool MatchType(Type formal, Type actual, IDictionary<Type, Type> inferred)
+    {
+        if (formal.IsGenericParameter)
+        {
+            if (inferred.TryGetValue(formal, out Type? previous)) return previous == actual;
+            inferred[formal] = actual;
+            return true;
+        }
+        if (formal.IsArray) return actual.IsArray && MatchType(formal.GetElementType()!, actual.GetElementType()!, inferred);
+        if (formal.IsGenericType)
+            return actual.IsGenericType && formal.GetGenericTypeDefinition() == actual.GetGenericTypeDefinition() &&
+                formal.GetGenericArguments().Zip(actual.GetGenericArguments(), (f, a) => MatchType(f, a, inferred)).All(v => v);
+        return formal == actual;
+    }
+
+    private static Type PublicType(Type type)
+    {
+        if (type == typeof(JavaFile)) return typeof(FileInfo);
+        if (type.IsArray) return PublicType(type.GetElementType()!).MakeArrayType();
+        if (type.IsGenericType) return type.GetGenericTypeDefinition().MakeGenericType(type.GetGenericArguments().Select(PublicType).ToArray());
+        return type;
+    }
+}
+#endif
+
 
 internal sealed class JavaFileNotFoundException : FileNotFoundException
 {
@@ -46,6 +610,14 @@ internal sealed class JavaRandomAccessFile : IDisposable
 {
     private readonly FileStream stream;
     private bool disposed;
+
+    internal JavaRandomAccessFile(JavaFile file, string mode) : this(RandomAccessPath(file, mode), mode) { }
+
+    private static FileInfo RandomAccessPath(JavaFile file, string mode)
+    {
+        if (mode != "r" && mode != "rw") throw new ArgumentException($"Unsupported random-access mode `{mode}`.", nameof(mode));
+        return file.OpenFileInfo();
+    }
 
     internal JavaRandomAccessFile(FileInfo file, string mode)
     {
@@ -676,6 +1248,86 @@ internal sealed class JavaPrintWriter
 
 internal static partial class JavaCompat
 {
+    internal static JavaFile NewJavaFile(string path) => new(path);
+    internal static JavaFile NewJavaFile(string? parent, string child) => new(parent, child);
+    internal static JavaFile NewJavaFile(JavaFile? parent, string child) => new(parent, child);
+    internal static JavaFile NewJavaFile(Uri uri) => new(uri, uri is null ? "" : UriToString(uri));
+    internal static bool FileExists(JavaFile file) => file.Exists;
+    internal static bool FileIsFile(JavaFile file) => file.IsFile;
+    internal static bool FileIsDirectory(JavaFile file) => file.IsDirectory;
+    internal static string FileGetPath(JavaFile file) => file.Pathname;
+    internal static string FileGetName(JavaFile file) => file.Name;
+    internal static string FileGetAbsolutePath(JavaFile file) => file.AbsolutePath;
+    internal static long FileLength(JavaFile file) => file.Length;
+    internal static bool FileEquals(JavaFile file, object? other) => file.Equals(other);
+    internal static JavaFile[]? FileListFiles(JavaFile file) => file.ListFiles();
+    internal static bool FileCanRead(JavaFile file) => FileQuery(file, FileCanRead);
+    internal static bool FileCanWrite(JavaFile file) => FileQuery(file, FileCanWrite);
+    internal static bool FileIsHidden(JavaFile file) => file.Queryable &&
+        (IsWindows() ? FileQuery(file, FileIsHidden) : file.Name.StartsWith(".", StringComparison.Ordinal));
+    private static bool FileQuery(JavaFile file, Func<FileInfo, bool> query)
+    {
+        if (!file.Queryable) return false;
+        try { return query(file.ToFileInfo()); }
+        catch (global::System.ArgumentException) { return false; }
+        catch (NotSupportedException) { return false; }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+    internal static long FileLastModified(JavaFile file)
+    {
+        if (!file.Exists) return 0;
+        try { return new DateTimeOffset(File.GetLastWriteTimeUtc(file.Pathname)).ToUnixTimeMilliseconds(); }
+        catch (IOException) { return 0; }
+        catch (UnauthorizedAccessException) { return 0; }
+    }
+    internal static bool FileDelete(JavaFile file) => file.Exists && FileQuery(file, FileDelete);
+    internal static bool FileCreateNewFile(JavaFile file)
+    {
+        if (file.Invalid || file.Pathname.Length == 0) throw new IOException("Invalid or empty Java pathname.");
+        if (file.Exists) return false;
+        try { return FileCreateNewFile(file.ToFileInfo()); }
+        catch (global::System.ArgumentException error) { throw new IOException(error.Message, error); }
+        catch (NotSupportedException error) { throw new IOException(error.Message, error); }
+        catch (UnauthorizedAccessException error) { throw new IOException(error.Message, error); }
+    }
+    internal static Stream OpenFileInput(JavaFile file) => OpenJavaFile(file, FileMode.Open, FileAccess.Read);
+    internal static Stream OpenFileOutput(JavaFile file) => OpenJavaFile(file, FileMode.Create, FileAccess.Write);
+    private static Stream OpenJavaFile(JavaFile file, FileMode mode, FileAccess access)
+    {
+        try { return new FileStream(file.OpenPath(), mode, access, FileShare.ReadWrite); }
+        catch (global::System.ArgumentException error) { throw new FileNotFoundException(error.Message, file.Pathname, error); }
+        catch (NotSupportedException error) { throw new FileNotFoundException(error.Message, file.Pathname, error); }
+        catch (UnauthorizedAccessException error) { throw new FileNotFoundException(error.Message, file.Pathname, error); }
+        catch (DirectoryNotFoundException error) { throw new FileNotFoundException(error.Message, file.Pathname, error); }
+    }
+    internal static TextReader OpenFileReader(JavaFile file) => new StreamReader(OpenFileInput(file));
+    internal static StreamWriter NewFileWriter(JavaFile file) => new(OpenFileOutput(file));
+    internal static StreamWriter NewFileWriter(JavaFile file, Encoding encoding) => new(OpenFileOutput(file), encoding);
+    internal static JavaPath FileToPath(JavaFile file)
+    {
+        if (file.Invalid) throw new ArgumentException("NUL character in Java pathname.", "path");
+        return new JavaPath(file.Pathname);
+    }
+    internal static Uri FileToUri(JavaFile file)
+    {
+        string path = file.AbsolutePath;
+        if (file.IsDirectory && !path.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+            path += Path.DirectorySeparatorChar;
+        Uri carrier = new UriBuilder("file", "") { Path = path }.Uri;
+        if (IsWindows()) path = path.Replace('\\', '/');
+        if (!path.StartsWith("/", StringComparison.Ordinal)) path = "/" + path;
+        if (path.StartsWith("//", StringComparison.Ordinal)) path = "//" + path;
+        string original = "file:" + QuoteUriComponent(path, ":@/!$&'()*+,;=");
+        _ = OriginalUriTexts.GetValue(carrier, _ => new JavaUriText(original));
+        return carrier;
+    }
+    internal static bool SetFileReadable(JavaFile file, bool readable, bool ownerOnly) =>
+        FileQuery(file, native => native.Exists || Directory.Exists(native.FullName)) && FileQuery(file, native => SetFileReadable(native, readable, ownerOnly));
+    internal static bool SetFileWritable(JavaFile file, bool writable, bool ownerOnly) =>
+        FileQuery(file, native => native.Exists || Directory.Exists(native.FullName)) && FileQuery(file, native => SetFileWritable(native, writable, ownerOnly));
+    internal static bool SetFileExecutable(JavaFile file, bool executable, bool ownerOnly) =>
+        FileQuery(file, native => native.Exists || Directory.Exists(native.FullName)) && FileQuery(file, native => SetFileExecutable(native, executable, ownerOnly));
     private sealed class StreamMark
     {
         internal long Position;

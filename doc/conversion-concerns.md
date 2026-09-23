@@ -17,6 +17,9 @@ declarations. Java/JDK symbols normally map to equivalent .NET types and APIs.
 Compatibility helpers are reserved for semantic mismatches without a faithful
 ordinary .NET representation.
 
+[Java file path compatibility](java-file-compatibility.md) describes the Java 17
+pathname representation and the preserved public `FileInfo` boundary.
+
 ## Common Type Mappings
 
 Examples include:
