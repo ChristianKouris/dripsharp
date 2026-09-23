@@ -41,7 +41,13 @@
        "--replay" "CASE.edn" "--max-processes" "20" "--max-ms" "180000"
        "--shrink-attempts" "0" "--shrink-ms" "1000"]}
      :translated-microprograms
-     {:fixed-command ["clojure" "-J-Xmx28g" "-M" "-m" "dripsharp.microprogram"]
+     {:families {"numeric" {:execution :explicit-local-only
+                            :generator {:id :numeric-templates :version 1}
+                            :command ["clojure" "-J-Xmx28g" "-M" "-m" "dripsharp.numeric-microprogram"
+                                      "--seed" "13" "--samples" "32"]
+                            :regression-command ["clojure" "-J-Xmx28g" "-M" "-m" "dripsharp.numeric-microprogram"
+                                                 "--samples" "0" "--case" "saved-byte-value"]}}
+      :fixed-command ["clojure" "-J-Xmx28g" "-M" "-m" "dripsharp.microprogram"]
       :replay-command ["clojure" "-J-Xmx28g" "-M" "-m" "dripsharp.microprogram"
                        "--replay" "snapshot.edn"]}
      :pdfcarton

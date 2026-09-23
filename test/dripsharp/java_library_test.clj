@@ -1498,7 +1498,7 @@
                      "src/Example/Java/Library/UnaryBoxed.cs")))]
     (is (contains-csharp?
          source
-         "return -global::DripSharp.Runtime.JavaCompat.Unbox(this.offset);"))
+         "return unchecked(-global::DripSharp.Runtime.JavaCompat.Unbox(this.offset));"))
     (is (contains-csharp?
          source
          "return -global::DripSharp.Runtime.JavaCompat.Unbox(this.width);"))
@@ -8279,7 +8279,7 @@
          "== unchecked((char)(global::Example.Java.Library.SwitchCases.LF)):"))
     (is (contains-csharp?
          first-source
-         "== unchecked((char)(-1)):"))
+         "== unchecked((char)(unchecked(-1))):"))
     (is (contains-csharp?
          first-source
          "== unchecked((sbyte)('(')):"))
@@ -8797,8 +8797,7 @@
                                         "src/Example/Java/Library/Bytes.cs")))]
     (is (contains-csharp?
          source
-         (str "return (global::DripSharp.Runtime.JavaCompat.AddAssign("
-              "ref values[index], amount));")))
+         "JavaCompat.CompoundAssign(ref values[index],"))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
                                :command ["dotnet" "build" (:project-file emission)
@@ -8821,18 +8820,10 @@
         source
         (slurp (str (paths/resolve-path (:project-root emission)
                                         "src/Example/Java/Library/Ints.cs")))]
-    (is (contains-csharp?
-         source
-         "JavaCompat.MultiplyAssign(ref values[index], amount)"))
-    (is (contains-csharp?
-         source
-         "JavaCompat.DivideAssign(ref values[index], amount)"))
-    (is (contains-csharp?
-         source
-         "JavaCompat.AddAssign(ref values[index], amount)"))
-    (is (contains-csharp?
-         source
-         "JavaCompat.XorAssign(ref values[index], amount)"))
+    (is (= 4 (count (re-seq #"JavaCompat\.CompoundAssign\(ref values\[index\]," source))))
+    (doseq [helper ["MultiplyAssign" "DivideAssign" "AddAssign"]]
+      (is (str/includes? source (str "=> global::DripSharp.Runtime.JavaCompat." helper))))
+    (is (re-find #"\^ amount" source))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
                                :command ["dotnet" "build" (:project-file emission)

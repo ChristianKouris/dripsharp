@@ -415,6 +415,9 @@
    "string" {"hash" {:arguments [#{"u" "n"}]
                      :exceptions #{"none" "null-pointer"}}}
    "long" {"hash" {:arguments [#{"i"}] :exceptions #{"none"}}}
+   "numeric" (into {} (for [operation ["int-div" "int-rem" "long-div" "long-rem"]]
+                        [operation {:arguments [#{"i"} #{"i"}]
+                                    :exceptions #{"none" "arithmetic"}}]))
    "byte-array-input"
    {"open" {:arguments [#{"b"} #{"i"} #{"i"}]
             :exceptions #{"none" "null-pointer" "index-out-of-bounds"}}
@@ -506,9 +509,9 @@
                                             (contains? types (subs value 0 1)))
                                           (:arguments spec) arguments))
                        (contains? (:exceptions spec) expected-exception)
-                       (or (not= family "long")
-                           (<= Long/MIN_VALUE (bigint (subs (first arguments) 2))
-                               Long/MAX_VALUE)))
+                       (or (not (contains? #{"long" "numeric"} family))
+                           (every? #(<= Long/MIN_VALUE (bigint (subs % 2)) Long/MAX_VALUE)
+                                   arguments)))
           (throw (ex-info "Unknown operation or invalid operation contract"
                           {:kind :invalid-case :row row})))))
     (let [selected (filterv #(and (or (nil? family) (= family (:family %)))

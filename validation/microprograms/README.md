@@ -63,8 +63,12 @@ observation per input identity and reports the first differing operation.
 
 The shipped methods create their own collection state for each call. A batch
 runs in one fresh process per side; templates must not depend on previous cases
-or mutate global state. `state` is `n:` because this protocol observes a method
-result rather than an externally retained object. Within a method, mutations
+or retain state from earlier cases. An operation can bind optional `:java-state`
+and `:dotnet-state` public static zero-argument observers on its subject type.
+After either success or a categorized exception, the native launcher records
+that getter's exact result as `state`; without a getter it records `n:`. Both
+bindings must be present together. The numeric family uses this to expose
+operand evaluation order and the final array cell. Within a method, mutations
 and method calls are translated normally: the collection example adds and
 replaces entries and calls a helper before returning a selected value.
 
@@ -83,6 +87,8 @@ consumer fails the batch at `:native-consumer`. Its source is part of the replay
 snapshot. The [JavaFile batch](java-file/README.md) uses this for public
 `FileInfo` signatures, rejection of unrepresentable exports, external dispatch,
 and mutable collection aliasing.
+The [numeric family](numeric/README.md) generates bounded integral templates,
+checks exact results and side effects, and provides replayable signedness controls.
 The [I/O batch](java-io/README.md) covers translated stream overloads, partial
 failures, resource exception precedence, and native .NET `Stream` consumers.
 

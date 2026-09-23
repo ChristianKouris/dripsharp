@@ -2843,6 +2843,21 @@
 
       node)))
 
+(defn- integral-expression? [^CtExpression expression]
+  (contains? #{"byte" "short" "char" "int" "long"
+               "java.lang.Byte" "java.lang.Short" "java.lang.Character"
+               "java.lang.Integer" "java.lang.Long"}
+             (or (some-> expression .getTypeCasts last .getQualifiedName)
+                 (some-> expression .getType .getQualifiedName))))
+
+(defn- compound-value-name [element]
+  (let [{:keys [line column]} (spoon/source-location element)
+        owner (or (enclosing-executable-element element) (.getParent element CtType))
+        used (set (when owner
+                    (map #(.getSimpleName ^spoon.reflect.declaration.CtNamedElement %)
+                         (.getElements owner (TypeFilter. spoon.reflect.declaration.CtNamedElement)))))]
+    (first (remove used (map #(str "__dripsharpValue_" line "_" column "_" %) (range))))))
+
 (defn- type-parameter-expression? [^CtExpression expression]
   (or (instance? CtTypeParameterReference (.getType expression))
       (and (instance? CtInvocation expression)
@@ -2890,6 +2905,43 @@
     "USR" ">>>"
     (unsupported! "Java library operator assignment has no neutral mapping"
                   expression)))
+
+(defn- compound-assignment-node [ctx ^CtOperatorAssignment element children helper]
+  (let [assigned (.getAssigned element)
+        assigned-type (some-> assigned .getType .getQualifiedName)
+        operator (assignment-operator element)]
+    (let [rhs (child-node children (.getAssignment element))
+          integral? (and (contains? #{"byte" "short" "char" "int" "long"} assigned-type)
+                         (integral-expression? (.getAssignment element)))
+          lower? (or helper (and integral? (or (contains? #{"byte" "short" "char"} assigned-type)
+                                               (contains? #{"/" "%"} operator))))
+          shift? (contains? #{"<<" ">>" ">>>"} operator)
+          rhs (if (and shift? integral?)
+                (sequence-node [(raw "unchecked((int)(") rhs (raw "))")]) rhs)]
+      (if lower?
+        (let [value-name (compound-value-name element)
+              old (raw value-name)
+              bitwise-old (if (and (= "|" operator)
+                                   (contains? #{"byte" "short" "int"} assigned-type))
+                            (sequence-node [(raw (str "unchecked(("
+                                                      ({"byte" "byte" "short" "ushort" "int" "uint"} assigned-type)
+                                                      ")(")) old (raw "))")]) old)
+              computation
+              (cond
+                (and helper (not integral?))
+                (compat-call helper [(sequence-node [(raw "ref ") old]) rhs])
+
+                (contains? #{"/" "%"} operator)
+                (compat-call (if (= "/" operator) "IntegralDivide" "IntegralRemainder") [old rhs])
+
+                :else (sequence-node [(raw "(") bitwise-old (raw (str " " operator " ")) rhs (raw ")")]))
+              narrowed (if integral?
+                         (sequence-node [(raw "unchecked((") (type-node ctx (.getType assigned))
+                                         (raw ")(") computation (raw "))")]) computation)]
+          (compat-call "CompoundAssign"
+                       [(sequence-node [(raw "ref ") (child-node children assigned)])
+                        (sequence-node [(raw (str value-name " => ")) narrowed])]))
+        (sequence-node [(child-node children assigned) (raw (str " " operator "= ")) rhs])))))
 
 (defn- unary-operator [^CtUnaryOperator expression]
   (case (str (.getKind expression))
@@ -7355,14 +7407,20 @@
                   (compat-call "Concat" [left right])
 
                   :else
-                  (sequence-node
-                   [(raw "(")
-                    left
-                    (raw (str " " (binary-operator element) " "))
-                    (if (= "INSTANCEOF" (str (.getKind element)))
-                      (inferred-instanceof-type-node @ctx-holder element children)
-                      right)
-                    (raw ")")])))]
+                  (let [integral? (and (integral-expression? left-expression)
+                                       (integral-expression? right-expression))]
+                    (if (and integral? (contains? #{"DIV" "MOD"} kind))
+                      (compat-call (if (= "DIV" kind) "IntegralDivide" "IntegralRemainder") [left right])
+                      (let [operation (sequence-node
+                                       [(raw "(") left
+                                        (raw (str " " (binary-operator element) " "))
+                                        (if (= "INSTANCEOF" kind)
+                                          (inferred-instanceof-type-node @ctx-holder element children)
+                                          right)
+                                        (raw ")")])]
+                        (if (and integral? (contains? #{"PLUS" "MINUS" "MUL"} kind))
+                          (sequence-node [(raw "unchecked(") operation (raw ")")])
+                          operation))))))]
            {:node (expression-cast-node @ctx-holder element node)}))}
 
       {:id :java-library.expression/conditional
@@ -7426,9 +7484,12 @@
                  (maybe-unbox-node @ctx-holder operand operand-node)
                  operand-node)
                expression-node
-               (if (str/blank? prefix)
-                 (sequence-node [operand-node (raw suffix)])
-                 (csharp/prefix prefix operand-node))
+               (let [operation (if (str/blank? prefix)
+                                 (sequence-node [operand-node (raw suffix)])
+                                 (csharp/prefix prefix operand-node))]
+                 (if (and (= "NEG" kind) (integral-expression? operand))
+                   (sequence-node [(raw "unchecked(") operation (raw ")")])
+                   operation))
                expression-node
                (if (instance? CtCase (.getParent element))
                  expression-node
@@ -7556,16 +7617,7 @@
                        ">>>" "UnsignedShiftRightAssign"}
                       operator))
                node
-               (if helper
-                 (compat-call
-                  helper
-                  [(sequence-node [(raw "ref ")
-                                   (child-node children assigned)])
-                   (child-node children (.getAssignment element))])
-                 (sequence-node
-                  [(child-node children assigned)
-                   (raw (str " " operator "= "))
-                   (child-node children (.getAssignment element))]))]
+               (compound-assignment-node @ctx-holder element children helper)]
            {:node
             (sequence-node
              [(when-not (or statement? for-clause?) (raw "("))

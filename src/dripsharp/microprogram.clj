@@ -68,6 +68,9 @@
                    (string? operation) (re-matches #"[A-Za-z0-9_.-]+" operation)
                    (every? #(and (string? %) (re-matches #"[A-Za-z_][A-Za-z0-9_.+]*" %))
                            (map entry [:java-type :java-method :dotnet-type :dotnet-method]))
+                   (or (and (nil? (:java-state entry)) (nil? (:dotnet-state entry)))
+                       (every? #(and (string? %) (re-matches #"[A-Za-z_][A-Za-z0-9_]*" %))
+                               (map entry [:java-state :dotnet-state])))
                    (vector? (:parameters entry))
                    (every? #{"int" "long" "string"} (:parameters entry)))
       (reject! "Invalid native observer operation binding" {:operation operation})))
@@ -124,7 +127,8 @@
     (util/write-text!
      file (str (str/join "\n" (for [[operation entry] (sort-by key (:operations snapshot))]
                                 (str/join "\t" [operation (type-key entry) (method-key entry)
-                                                (str/join "," (:parameters entry))]))) "\n"))
+                                                (str/join "," (:parameters entry))
+                                                (or ((keyword (str (name side) "-state")) entry) "")]))) "\n"))
     file))
 
 (defn emit-subjects!

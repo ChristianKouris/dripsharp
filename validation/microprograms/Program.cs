@@ -67,6 +67,7 @@ internal static class Program
         }
         var library = Assembly.Load("DripSharp.Microprograms");
         var methods = new Dictionary<string, MethodInfo>(StringComparer.Ordinal);
+        var states = new Dictionary<string, MethodInfo>(StringComparer.Ordinal);
         foreach (string line in File.ReadAllLines(args[0], Encoding.UTF8))
         {
             string[] fields = line.Split('\t');
@@ -76,6 +77,8 @@ internal static class Program
                 ?? throw new MissingMethodException(fields[1], fields[2]);
             if (!method.IsStatic) throw new ArgumentException("Subject entry must be static");
             methods.Add(fields[0], method);
+            if (fields.Length > 4 && fields[4].Length != 0)
+                states.Add(fields[0], library.GetType(fields[1], true)!.GetMethod(fields[4], Type.EmptyTypes)!);
         }
         string[] input = File.ReadAllLines(args[1], Encoding.UTF8);
         if (input[0] != "DRIPSHARP_DIFFERENTIAL_CASES_V1") throw new ArgumentException("Invalid input header");
@@ -96,7 +99,8 @@ internal static class Program
                 exception = Category(error.InnerException);
                 result = "n:";
             }
-            output.WriteLine(string.Join("\t", fields[0], fields[1], fields[2], fields[3], exception, result, "n:"));
+            output.WriteLine(string.Join("\t", fields[0], fields[1], fields[2], fields[3], exception, result,
+                states.TryGetValue(fields[3], out var state) ? Observe(state.Invoke(null, null)) : "n:"));
         }
     }
 }

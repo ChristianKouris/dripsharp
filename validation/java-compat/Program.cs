@@ -335,6 +335,7 @@ internal static class Program
                 var operation = fields[0] + "/" + fields[3];
                 var arity = operation switch
                 {
+                    "numeric/int-div" or "numeric/int-rem" or "numeric/long-div" or "numeric/long-rem" => 2,
                     "byte-buffer/wrap" or "string/hash" or "long/hash" => 1,
                     "byte-buffer/get" or "byte-buffer/get-int" => 0,
                     "byte-array-input/open" => 3,
@@ -378,6 +379,8 @@ internal static class Program
                     values.Any(value => value is not null and not string))
                     throw new InvalidDataException("Wrong argument type");
                 var number = operation == "long/hash" ? (long)(System.Numerics.BigInteger)values[0]! : 0;
+                var numericLeft = operation.StartsWith("numeric/", StringComparison.Ordinal) ? (long)(System.Numerics.BigInteger)values[0]! : 0;
+                var numericRight = operation.StartsWith("numeric/", StringComparison.Ordinal) ? (long)(System.Numerics.BigInteger)values[1]! : 0;
                 var caseRoot = operation.StartsWith("file/", StringComparison.Ordinal)
                     ? FileCaseRoot(input, fields[1]) : null;
                 for (var index = 0; index < values.Length; index++)
@@ -393,6 +396,10 @@ internal static class Program
                 {
                     switch (operation)
                     {
+                        case "numeric/int-div": result = "i:" + JavaCompat.IntegralDivide(unchecked((int)numericLeft), unchecked((int)numericRight)).ToString(CultureInfo.InvariantCulture); break;
+                        case "numeric/int-rem": result = "i:" + JavaCompat.IntegralRemainder(unchecked((int)numericLeft), unchecked((int)numericRight)).ToString(CultureInfo.InvariantCulture); break;
+                        case "numeric/long-div": result = "i:" + JavaCompat.IntegralDivide(numericLeft, numericRight).ToString(CultureInfo.InvariantCulture); break;
+                        case "numeric/long-rem": result = "i:" + JavaCompat.IntegralRemainder(numericLeft, numericRight).ToString(CultureInfo.InvariantCulture); break;
                         case "byte-buffer/wrap":
                             var replacement = JavaByteBuffer.wrap((sbyte[])values[0]!);
                             buffer?.Dispose();
@@ -568,6 +575,7 @@ internal static class Program
                             break;
                     }
                 }
+                catch (DivideByZeroException) { exception = "arithmetic"; }
                 catch (ArgumentNullException) { exception = "null-pointer"; }
                 catch (NullReferenceException) { exception = "null-pointer"; }
                 catch (EndOfStreamException) { exception = operation.StartsWith("random-access/", StringComparison.Ordinal) ? "eof" : "buffer-underflow"; }

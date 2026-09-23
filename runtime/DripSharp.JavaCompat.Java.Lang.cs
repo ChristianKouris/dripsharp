@@ -474,6 +474,25 @@ internal static partial class JavaCompat
             throw new JavaAssertionError(message?.Invoke()?.ToString());
     }
 
+    // CLR signed division traps MIN_VALUE / -1 even in unchecked code.
+    // Java wraps the quotient and defines a zero remainder in this case.
+    internal static int IntegralDivide(int left, int right) =>
+        left == int.MinValue && right == -1 ? int.MinValue : left / right;
+    internal static long IntegralDivide(long left, long right) =>
+        left == long.MinValue && right == -1 ? long.MinValue : left / right;
+    internal static int IntegralRemainder(int left, int right) =>
+        left == int.MinValue && right == -1 ? 0 : left % right;
+    internal static long IntegralRemainder(long left, long right) =>
+        left == long.MinValue && right == -1 ? 0L : left % right;
+
+    // Evaluate the location once (including null/bounds checks), then save its
+    // value before the deferred RHS. The RHS may mutate that very location.
+    internal static T CompoundAssign<T>(ref T target, Func<T, T> operation)
+    {
+        T previous = target;
+        return target = operation(previous);
+    }
+
     // Java compound assignment includes the narrowing conversion back to the
     // left-hand type. A ref helper also preserves Java's single evaluation of
     // array indexes and other assignable expressions.

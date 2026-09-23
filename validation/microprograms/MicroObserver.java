@@ -57,6 +57,7 @@ public final class MicroObserver {
             return;
         }
         Map<String, Method> methods = new HashMap<>();
+        Map<String, Method> states = new HashMap<>();
         for (String line : Files.readAllLines(Path.of(args[0]), StandardCharsets.UTF_8)) {
             String[] fields = line.split("\t", -1);
             String[] names = fields[3].isEmpty() ? new String[0] : fields[3].split(",");
@@ -66,6 +67,8 @@ public final class MicroObserver {
             if (!Modifier.isStatic(method.getModifiers()))
                 throw new IllegalArgumentException("Subject entry must be static");
             methods.put(fields[0], method);
+            if (fields.length > 4 && !fields[4].isEmpty())
+                states.put(fields[0], Class.forName(fields[1]).getMethod(fields[4]));
         }
         List<String> input = Files.readAllLines(Path.of(args[1]), StandardCharsets.UTF_8);
         if (!input.get(0).equals("DRIPSHARP_DIFFERENTIAL_CASES_V1"))
@@ -87,7 +90,8 @@ public final class MicroObserver {
                     result = "n:";
                 }
                 output.write(String.join("\t", fields[0], fields[1], fields[2], fields[3],
-                                         exception, result, "n:") + "\n");
+                                         exception, result, states.containsKey(fields[3])
+                                         ? observe(states.get(fields[3]).invoke(null)) : "n:") + "\n");
             }
         }
     }

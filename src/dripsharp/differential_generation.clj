@@ -6,13 +6,13 @@
             [dripsharp.util :as util])
   (:import [java.util Random]))
 
-(def generator-identity {:id :java-compat-operations :version 3})
+(def generator-identity {:id :java-compat-operations :version 4})
 (def default-limits {:max-operations 32 :max-value-units 32 :max-input-bytes 65536})
 (def generated-families
   "Families with an explicit generator/domain model. Kept separate from the
   larger fixed-case registry so registration never implies generation support."
   ["byte-array-input" "byte-array-output" "byte-buffer" "file"
-   "filter-input" "filter-output" "long" "random-access" "string"])
+   "filter-input" "filter-output" "long" "numeric" "random-access" "string"])
 
 (defn- require! [condition message]
   (when-not condition (throw (ex-info message {:kind :invalid-generated-case}))))
@@ -58,6 +58,11 @@
   (let [integer #(parse-long (subs % 2))
         byte-count #(quot (- (count %) 2) 2)]
     (case family
+      "numeric"
+      [(if (zero? (if (str/starts-with? operation "int-")
+                    (unchecked-int (integer (second arguments)))
+                    (integer (second arguments)))) "arithmetic" "none") state]
+
       "byte-buffer"
       (case operation
         "wrap" (if (= "n:" (first arguments))
@@ -208,6 +213,7 @@
                                                "write-buffer" "seek" "skip" "length"
                                                "position" "set-length" "close"]
                                         ["open" "open" "read-one"]))
+          "numeric" (pick rng ["int-div" "int-rem" "long-div" "long-rem"])
           "file" "inspect"
           "hash")
         bytes #(value rng :bytes max-units)
@@ -251,6 +257,7 @@
                             [buffer "i:0" (str "i:" size)])
             ("read-fully" "write-buffer") [(bytes)]
             ("seek" "skip" "set-length") [(small-int)] [])
+          "numeric" [(value rng :integer max-units) (value rng :integer max-units)]
           "long" [(value rng :integer max-units)]
           "file" [(if (zero? (.nextInt rng 8)) "n:" (value rng :path max-units))]
           [(if (zero? (.nextInt rng 8)) "n:"
@@ -316,6 +323,8 @@
                              (or (= token "n:") (bytes-token? token))))
       "string" (and (= operation "hash") (= 1 (count arguments))
                     (or (= token "n:") (str/starts-with? token "u:")))
+      "numeric" (and (contains? #{"int-div" "int-rem" "long-div" "long-rem"} operation)
+                     (= 2 (count arguments)) (every? integer-token? arguments))
       "long" (and (= operation "hash") (= 1 (count arguments)) (integer-token? token))
       "file" (and (= operation "inspect") (= 1 (count arguments))
                   (or (= token "n:") (str/starts-with? token "u:")))

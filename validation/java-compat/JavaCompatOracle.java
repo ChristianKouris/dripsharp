@@ -285,6 +285,7 @@ public final class JavaCompatOracle {
         throw new IllegalArgumentException("Duplicate case step");
       var operation = fields[0] + "/" + fields[3];
       int arity = switch (operation) {
+        case "numeric/int-div", "numeric/int-rem", "numeric/long-div", "numeric/long-rem" -> 2;
         case "byte-buffer/wrap", "string/hash", "long/hash" -> 1;
         case "byte-buffer/get", "byte-buffer/get-int" -> 0;
         case "byte-array-input/open", "filter-input/open",
@@ -327,6 +328,8 @@ public final class JavaCompatOracle {
         throw new IllegalArgumentException("Wrong argument type");
       long number = operation.equals("long/hash")
           ? ((java.math.BigInteger)values[0]).longValueExact() : 0;
+      long numericLeft = operation.startsWith("numeric/") ? ((java.math.BigInteger)values[0]).longValueExact() : 0;
+      long numericRight = operation.startsWith("numeric/") ? ((java.math.BigInteger)values[1]).longValueExact() : 0;
       Path caseRoot = operation.startsWith("file/") ? fileCaseRoot(input, fields[1]) : null;
       for (int i = 0; i < values.length; i++)
         if (values[i] instanceof String text)
@@ -335,6 +338,10 @@ public final class JavaCompatOracle {
       var exception = "none";
       try {
         switch (operation) {
+          case "numeric/int-div" -> result = "i:" + ((int)numericLeft / (int)numericRight);
+          case "numeric/int-rem" -> result = "i:" + ((int)numericLeft % (int)numericRight);
+          case "numeric/long-div" -> result = "i:" + (numericLeft / numericRight);
+          case "numeric/long-rem" -> result = "i:" + (numericLeft % numericRight);
           case "byte-buffer/wrap" -> buffers.put(key, ByteBuffer.wrap((byte[])values[0]));
           case "byte-buffer/get" -> result = "i:" + buffers.get(key).get();
           case "byte-buffer/get-int" -> result = "i:" + buffers.get(key).getInt();
@@ -457,6 +464,8 @@ public final class JavaCompatOracle {
         exception = "file-not-found";
       } catch (IndexOutOfBoundsException error) {
         exception = "index-out-of-bounds";
+      } catch (ArithmeticException error) {
+        exception = "arithmetic";
       } catch (IllegalArgumentException error) {
         exception = "illegal-argument";
       } catch (IOException error) {
