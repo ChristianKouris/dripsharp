@@ -16,6 +16,82 @@ string	code-units	0	hash	none	u:00000009d8000061dc00ffff
 long	maximum	0	hash	none	i:9223372036854775807
 long	minimum	0	hash	none	i:-9223372036854775808
 long	beyond-double	0	hash	none	i:9007199254740993
+byte-array-input	boundaries	0	open	none	b:0080ff0102	i:1	i:3
+byte-array-input	boundaries	1	available	none
+byte-array-input	boundaries	2	mark-supported	none
+byte-array-input	boundaries	3	read-one	none
+byte-array-input	boundaries	4	mark	none	i:9
+byte-array-input	boundaries	5	read-buffer	none	b:aaaaaaaa	i:1	i:0
+byte-array-input	boundaries	6	read-buffer	none	b:aaaaaaaa	i:1	i:2
+byte-array-input	boundaries	7	reset	none
+byte-array-input	boundaries	8	skip	none	i:-1
+byte-array-input	boundaries	9	skip	none	i:99
+byte-array-input	boundaries	10	read-one	none
+byte-array-input	boundaries	11	read-buffer	none	b:aaaaaaaa	i:4	i:0
+byte-array-input	boundaries	12	read-buffer	none	b:aaaaaaaa	i:1	i:1
+byte-array-input	boundaries	13	close	none
+byte-array-input	boundaries	14	reset	none
+byte-array-input	boundaries	15	read-one	none
+filter-input	short-read	0	open	none	b:80ff010203	i:2	i:-1
+filter-input	short-read	1	read-buffer	none	b:aaaaaaaaaaaa	i:1	i:4
+filter-input	short-read	2	available	none
+filter-input	short-read	3	skip	none	i:1
+filter-input	short-read	4	read-one	none
+filter-input	short-read	5	mark-supported	none
+filter-input	short-read	6	mark	none	i:8
+filter-input	short-read	7	reset	io
+filter-input	short-read	8	close	none
+filter-input	short-read	9	available	io
+filter-input	short-read	10	read-one	io
+filter-input	eof	0	open	none	b:ff	i:2	i:-1
+filter-input	eof	1	read-buffer	none	b:aaaaaaaa	i:1	i:3
+filter-input	eof	2	read-one	none
+filter-input	eof	3	read-buffer	none	b:aaaaaaaa	i:4	i:0
+filter-input	injected-failure	0	open	none	b:01020304	i:3	i:2
+filter-input	injected-failure	1	read-buffer	none	b:aaaaaaaaaa	i:1	i:4
+filter-input	injected-failure	2	read-buffer	io	b:bbbbbbbbbb	i:1	i:4
+byte-array-output	close-noop	0	open	none	i:0
+byte-array-output	close-noop	1	write-one	none	i:128
+byte-array-output	close-noop	2	write-buffer	none	b:000102ff	i:1	i:2
+byte-array-output	close-noop	3	write-buffer	none	b:000102ff	i:4	i:0
+byte-array-output	close-noop	4	size	none
+byte-array-output	close-noop	5	close	none
+byte-array-output	close-noop	6	write-one	none	i:255
+byte-array-output	close-noop	7	reset	none
+byte-array-output	close-noop	8	write-buffer	none	b:80ff	i:0	i:2
+filter-output	injected-failure	0	open	none	i:2
+filter-output	injected-failure	1	write-buffer	io	b:00010203	i:1	i:3
+filter-output	injected-failure	2	write-one	io	i:9
+filter-output	injected-failure	3	flush	none
+filter-output	injected-failure	4	close	none
+filter-output	injected-failure	5	write-one	io	i:9
+filter-output	zero-and-close	0	open	none	i:-1
+filter-output	zero-and-close	1	write-buffer	none	b:0102	i:2	i:0
+filter-output	zero-and-close	2	write-one	none	i:-1
+filter-output	zero-and-close	3	close	none
+filter-output	zero-and-close	4	write-one	io	i:1
+random-access	boundaries	0	open	none	b:0080ff	u:00720077
+random-access	boundaries	1	read-one	none
+random-access	boundaries	2	read-buffer	none	b:aaaaaaaa	i:1	i:2
+random-access	boundaries	3	read-buffer	none	b:bbbbbbbb	i:1	i:1
+random-access	boundaries	4	seek	none	i:1
+random-access	boundaries	5	read-fully	eof	b:aaaaaaaa
+random-access	boundaries	6	seek	none	i:0
+random-access	boundaries	7	skip	none	i:99
+random-access	boundaries	8	skip	none	i:-2
+random-access	boundaries	9	set-length	none	i:1
+random-access	boundaries	10	length	none
+random-access	boundaries	11	seek	none	i:4
+random-access	boundaries	12	write-buffer	none	b:0102
+random-access	boundaries	13	position	none
+random-access	boundaries	14	close	none
+random-access	boundaries	15	length	io
+random-access	boundaries	16	read-fully	none	b:
+random-access	boundaries	17	read-buffer	none	b:	i:0	i:0
+random-access	read-only	0	open	none	b:01	u:0072
+random-access	read-only	1	write-buffer	io	b:02
+random-access	read-only	2	set-length	io	i:0
+random-access	read-only	3	close	none
 file	lexical	0	inspect	null-pointer	n:
 file	lexical	1	inspect	none	u:
 file	lexical	2	inspect	none	u:0020

@@ -6,7 +6,7 @@
             [dripsharp.util :as util])
   (:import [java.util Random]))
 
-(def generator-identity {:id :java-compat-operations :version 2})
+(def generator-identity {:id :java-compat-operations :version 3})
 (def default-limits {:max-operations 32 :max-value-units 32 :max-input-bytes 65536})
 
 (defn- require! [condition message]
@@ -50,26 +50,221 @@
   "Small input-domain model only: construction, cursor bounds, exception intent.
   Never computes the observed byte/int/hash result used by the differential."
   [state {:keys [family operation arguments step]}]
-  (if (= family "byte-buffer")
-    (case operation
-      "wrap" (if (= "n:" (first arguments))
-               ["null-pointer" state]
-               ["none" {:size (quot (- (count (first arguments)) 2) 2) :position 0 :creator step}])
-      (let [width (case operation "get" 1 "get-int" 4)]
+  (let [integer #(parse-long (subs % 2))
+        byte-count #(quot (- (count %) 2) 2)]
+    (case family
+      "byte-buffer"
+      (case operation
+        "wrap" (if (= "n:" (first arguments))
+                 ["null-pointer" state]
+                 ["none" {:size (byte-count (first arguments)) :position 0 :creator step}])
+        (let [width (case operation "get" 1 "get-int" 4)]
+          (cond
+            (nil? state) ["null-pointer" state]
+            (> (+ (:position state) width) (:size state)) ["buffer-underflow" state]
+            :else ["none" (update state :position + width)])))
+
+      "byte-array-input"
+      (case operation
+        "open" ["none" {:size (integer (nth arguments 2)) :position 0 :creator step}]
+        (if (nil? state)
+          ["null-pointer" state]
+          (case operation
+            "read-one" ["none" (update state :position #(min (:size state) (inc %)))]
+            "read-buffer" (let [length (integer (nth arguments 2))]
+                            ["none" (update state :position
+                                            #(min (:size state) (+ % length)))])
+            "skip" (let [count (integer (first arguments))]
+                     ["none" (if (pos? count)
+                               (update state :position #(min (:size state) (+ % count))) state)])
+            ["none" state])))
+
+      "filter-input"
+      (case operation
+        "open" ["none" {:size (byte-count (first arguments)) :position 0
+                        :max-chunk (integer (second arguments))
+                        :failure (integer (nth arguments 2)) :closed false :creator step}]
         (cond
           (nil? state) ["null-pointer" state]
-          (> (+ (:position state) width) (:size state)) ["buffer-underflow" state]
-          :else ["none" (update state :position + width)])))
-    [(if (= "n:" (first arguments)) "null-pointer" "none") state]))
+          (= operation "close") ["none" (assoc state :closed true)]
+          (:closed state) ["io" state]
+          (= operation "read-one")
+          (if (and (not= -1 (:failure state)) (>= (:position state) (:failure state)))
+            ["io" state]
+            ["none" (update state :position #(min (:size state) (inc %)))])
+          (= operation "read-buffer")
+          (let [length (integer (nth arguments 2))
+                until-failure (if (= -1 (:failure state)) Long/MAX_VALUE
+                                  (- (:failure state) (:position state)))]
+            (if (and (pos? length) (<= until-failure 0))
+              ["io" state]
+              ["none" (update state :position
+                              #(min (:size state)
+                                    (+ % (max 0 (min length (:max-chunk state) until-failure)))))]))
+          (= operation "skip")
+          (let [count (integer (first arguments))]
+            ["none" (if (pos? count)
+                      (update state :position #(min (:size state) (+ % count))) state)])
+          (= operation "reset") ["io" state]
+          :else ["none" state]))
+
+      "byte-array-output"
+      (case operation
+        "open" ["none" {:size 0 :creator step}]
+        (if (nil? state)
+          ["null-pointer" state]
+          (case operation
+            "write-one" ["none" (update state :size inc)]
+            "write-buffer" ["none" (update state :size + (integer (nth arguments 2)))]
+            "reset" ["none" (assoc state :size 0)]
+            ["none" state])))
+
+      "filter-output"
+      (case operation
+        "open" ["none" {:position 0 :failure (integer (first arguments))
+                        :closed false :creator step}]
+        (cond
+          (nil? state) ["null-pointer" state]
+          (= operation "close") ["none" (assoc state :closed true)]
+          (:closed state)
+          [(if (and (= operation "write-buffer")
+                    (zero? (integer (nth arguments 2)))) "none" "io") state]
+          (= operation "write-one")
+          (if (and (not= -1 (:failure state)) (>= (:position state) (:failure state)))
+            ["io" state] ["none" (update state :position inc)])
+          (= operation "write-buffer")
+          (let [length (integer (nth arguments 2))
+                available (if (= -1 (:failure state)) Long/MAX_VALUE
+                              (- (:failure state) (:position state)))
+                written (max 0 (min length available))]
+            [(if (< written length) "io" "none") (update state :position + written)])
+          :else ["none" state]))
+
+      "random-access"
+      (case operation
+        "open" ["none" {:size (byte-count (first arguments)) :position 0
+                        :closed false :creator step}]
+        (cond
+          (nil? state) ["null-pointer" state]
+          (= operation "close") ["none" (assoc state :closed true)]
+          (:closed state)
+          [(if (and (contains? #{"read-buffer" "read-fully"} operation)
+                    (zero? (byte-count (first arguments)))) "none" "io") state]
+          (= operation "read-one")
+          ["none" (if (< (:position state) (:size state))
+                    (update state :position inc) state)]
+          (= operation "read-buffer")
+          (let [length (integer (nth arguments 2))
+                consumed (min length (max 0 (- (:size state) (:position state))))]
+            ["none" (update state :position + consumed)])
+          (= operation "read-fully")
+          (let [length (byte-count (first arguments))
+                remaining (max 0 (- (:size state) (:position state)))]
+            [(if (> length remaining) "eof" "none")
+             (update state :position + (min length remaining))])
+          (= operation "write-buffer")
+          (let [length (byte-count (first arguments))
+                end (+ (:position state) length)]
+            ["none" (assoc state :position end :size (max (:size state) end))])
+          (= operation "seek")
+          (let [position (integer (first arguments))]
+            (if (neg? position) ["io" state] ["none" (assoc state :position position)]))
+          (= operation "skip")
+          (let [count (integer (first arguments))]
+            ["none" (if (pos? count)
+                      (update state :position +
+                              (min count (max 0 (- (:size state) (:position state))))) state)])
+          (= operation "set-length")
+          (let [length (integer (first arguments))]
+            (if (neg? length) ["io" state]
+                ["none" (assoc state :size length :position (min length (:position state)))]))
+          :else ["none" state]))
+
+      [(if (= "n:" (first arguments)) "null-pointer" "none") state])))
+
+(defn- generated-operation [^Random rng family state step max-units]
+  (let [open? #(contains? #{"wrap" "open"} %)
+        operation
+        (case family
+          "byte-buffer" (pick rng (if state ["wrap" "get" "get" "get-int"] ["wrap" "wrap" "get"]))
+          "byte-array-input" (pick rng (if state ["open" "read-one" "read-buffer" "skip"
+                                                  "available" "mark" "reset" "close"]
+                                           ["open" "open" "read-one"]))
+          "filter-input" (pick rng (if state ["open" "read-one" "read-buffer" "skip"
+                                              "available" "mark-supported" "reset" "close"]
+                                       ["open" "open" "read-one"]))
+          "byte-array-output" (pick rng (if state ["open" "write-one" "write-buffer"
+                                                   "size" "reset" "close"]
+                                            ["open" "open" "write-one"]))
+          "filter-output" (pick rng (if state ["open" "write-one" "write-buffer"
+                                               "flush" "close"]
+                                        ["open" "open" "write-one"]))
+          "random-access" (pick rng (if state ["open" "read-one" "read-buffer" "read-fully"
+                                               "write-buffer" "seek" "skip" "length"
+                                               "position" "set-length" "close"]
+                                        ["open" "open" "read-one"]))
+          "file" "inspect"
+          "hash")
+        bytes #(value rng :bytes max-units)
+        small-int #(str "i:" (biased rng [-1 0 1 2 4 32] (fn [] (.nextInt rng 33))))
+        arguments
+        (case family
+          "byte-buffer" (if (contains? #{"get" "get-int"} operation) []
+                            [(if (zero? (.nextInt rng 8)) "n:" (bytes))])
+          "byte-array-input"
+          (case operation
+            "open" (let [data (bytes) size (quot (- (count data) 2) 2)] [data "i:0" (str "i:" size)])
+            "read-buffer" (let [buffer (bytes) size (quot (- (count buffer) 2) 2)]
+                            [buffer "i:0" (str "i:" size)])
+            ("skip" "mark") [(small-int)] [])
+          "filter-input"
+          (case operation
+            "open" (let [data (bytes) size (quot (- (count data) 2) 2)
+                         failure (pick rng [-1 0 (quot size 2) size])]
+                     [data (str "i:" (inc (.nextInt rng 4))) (str "i:" failure)])
+            "read-buffer" (let [buffer (bytes) size (quot (- (count buffer) 2) 2)]
+                            [buffer "i:0" (str "i:" size)])
+            "skip" [(small-int)] [])
+          "byte-array-output"
+          (case operation
+            "open" [(str "i:" (.nextInt rng 9))]
+            "write-one" [(small-int)]
+            "write-buffer" (let [buffer (bytes) size (quot (- (count buffer) 2) 2)]
+                             [buffer "i:0" (str "i:" size)])
+            [])
+          "filter-output"
+          (case operation
+            "open" [(str "i:" (pick rng [-1 0 1 2 4 32]))]
+            "write-one" [(small-int)]
+            "write-buffer" (let [buffer (bytes) size (quot (- (count buffer) 2) 2)]
+                             [buffer "i:0" (str "i:" size)])
+            [])
+          "random-access"
+          (case operation
+            "open" [(bytes) "u:00720077"]
+            "read-buffer" (let [buffer (bytes) size (quot (- (count buffer) 2) 2)]
+                            [buffer "i:0" (str "i:" size)])
+            ("read-fully" "write-buffer") [(bytes)]
+            ("seek" "skip" "set-length") [(small-int)] [])
+          "long" [(value rng :integer max-units)]
+          "file" [(if (zero? (.nextInt rng 8)) "n:" (value rng :path max-units))]
+          [(if (zero? (.nextInt rng 8)) "n:"
+               (value rng (pick rng [:string :path]) max-units))])]
+    {:family family :operation operation :arguments arguments :step step
+     :constructor? (open? operation)}))
 
 (defn generate
   "Produces one concrete case once; replay consumes :operations, not this fn.
   Native (family, case) runner state keys carry the explicit :handle identity."
   ([seed] (generate seed {}))
   ([seed options]
-   (let [families (or (:families options) ["byte-buffer" "byte-buffer" "string" "long"])
+   (let [families (or (:families options) ["byte-buffer" "byte-array-input" "filter-input"
+                                           "byte-array-output" "filter-output"
+                                           "random-access" "string" "long"])
          _ (require! (and (vector? families) (seq families)
-                          (every? #{"byte-buffer" "string" "long" "file"} families))
+                          (every? #{"byte-buffer" "byte-array-input" "filter-input"
+                                    "byte-array-output" "filter-output" "random-access"
+                                    "string" "long" "file"} families))
                      "Invalid generated family selection")
          limits (limits! (merge default-limits (dissoc options :families)))
          rng (Random. (long seed))
@@ -83,20 +278,13 @@
                    handle (str "h" (.nextInt rng 3))
                    key [family handle]
                    state (get states key)
-                   operation (case family
-                               "byte-buffer" (pick rng (if state ["wrap" "get" "get" "get-int"]
-                                                           ["wrap" "wrap" "get"]))
-                               "file" "inspect"
-                               "hash")
-                   kind (case family "byte-buffer" :bytes "long" :integer
-                              "file" :path
-                              (pick rng [:string :path]))
-                   arguments (if (contains? #{"get" "get-int"} operation) []
-                                 [(if (and (not= family "long") (zero? (.nextInt rng 8)))
-                                    "n:" (value rng kind (:max-value-units limits)))])
+                   generated (generated-operation rng family state (str i)
+                                                  (:max-value-units limits))
+                   operation (:operation generated)
+                   arguments (:arguments generated)
                    row {:family family :case handle :handle handle :step (str i)
                         :operation operation :arguments arguments
-                        :requires (if (and state (contains? #{"get" "get-int"} operation))
+                        :requires (if (and state (not (:constructor? generated)))
                                     [(:creator state)] [])}
                    [exception next-state] (transition state row)]
                (recur (inc i) (assoc states key next-state)
@@ -106,6 +294,74 @@
       :generator-runtime {:clojure (clojure-version) :prng "java.util.Random"
                           :java (System/getProperty "java.runtime.version")}
       :limits limits :operations operations})))
+
+(defn- integer-token? [token]
+  (and (string? token) (str/starts-with? token "i:")
+       (<= Long/MIN_VALUE (bigint (subs token 2)) Long/MAX_VALUE)))
+
+(defn- bytes-token? [token]
+  (and (string? token) (str/starts-with? token "b:")))
+
+(defn- exact-buffer-range? [[buffer offset length]]
+  (and (bytes-token? buffer) (integer-token? offset) (integer-token? length)
+       (zero? (parse-long (subs offset 2)))
+       (= (parse-long (subs length 2)) (quot (- (count buffer) 2) 2))))
+
+(defn- operation-domain? [family operation arguments]
+  (let [token (first arguments)]
+    (case family
+      "byte-buffer" (if (contains? #{"get" "get-int"} operation) (empty? arguments)
+                        (and (= operation "wrap") (= 1 (count arguments))
+                             (or (= token "n:") (bytes-token? token))))
+      "string" (and (= operation "hash") (= 1 (count arguments))
+                    (or (= token "n:") (str/starts-with? token "u:")))
+      "long" (and (= operation "hash") (= 1 (count arguments)) (integer-token? token))
+      "file" (and (= operation "inspect") (= 1 (count arguments))
+                  (or (= token "n:") (str/starts-with? token "u:")))
+      "byte-array-input"
+      (case operation
+        "open" (exact-buffer-range? arguments)
+        "read-buffer" (exact-buffer-range? arguments)
+        ("skip" "mark") (and (= 1 (count arguments)) (integer-token? token))
+        ("read-one" "available" "reset" "close") (empty? arguments)
+        false)
+      "filter-input"
+      (case operation
+        "open" (and (= 3 (count arguments)) (bytes-token? token)
+                    (every? integer-token? (rest arguments))
+                    (pos? (parse-long (subs (second arguments) 2)))
+                    (<= -1 (parse-long (subs (nth arguments 2) 2))
+                        (quot (- (count token) 2) 2)))
+        "read-buffer" (exact-buffer-range? arguments)
+        "skip" (and (= 1 (count arguments)) (integer-token? token))
+        ("read-one" "available" "mark-supported" "reset" "close") (empty? arguments)
+        false)
+      "byte-array-output"
+      (case operation
+        "open" (and (= 1 (count arguments)) (integer-token? token)
+                    (not (neg? (parse-long (subs token 2)))))
+        "write-one" (and (= 1 (count arguments)) (integer-token? token))
+        "write-buffer" (exact-buffer-range? arguments)
+        ("size" "reset" "close") (empty? arguments)
+        false)
+      "filter-output"
+      (case operation
+        "open" (and (= 1 (count arguments)) (integer-token? token)
+                    (<= -1 (parse-long (subs token 2))))
+        "write-one" (and (= 1 (count arguments)) (integer-token? token))
+        "write-buffer" (exact-buffer-range? arguments)
+        ("flush" "close") (empty? arguments)
+        false)
+      "random-access"
+      (case operation
+        "open" (and (= 2 (count arguments)) (bytes-token? token)
+                    (= "u:00720077" (second arguments)))
+        "read-buffer" (exact-buffer-range? arguments)
+        ("read-fully" "write-buffer") (and (= 1 (count arguments)) (bytes-token? token))
+        ("seek" "skip" "set-length") (and (= 1 (count arguments)) (integer-token? token))
+        ("read-one" "length" "position" "close") (empty? arguments)
+        false)
+      false)))
 
 (defn validate!
   "Validates bounded records and construction/use relationships. Shrinking must
@@ -128,25 +384,12 @@
      (fn [{:keys [states seen] :as acc} row]
        (let [{:keys [family operation arguments handle step requires expected-exception intent]} row
              state (get states [family handle])
-             byte? (= family "byte-buffer")
-             read? (contains? #{"get" "get-int"} operation)
-             token (first arguments)]
+             constructor? (contains? #{"wrap" "open"} operation)]
          (require! (and (= handle (:case row)) (string? handle)
                         (not (contains? seen step)) (vector? requires)
-                        (= requires (if (and byte? read? state) [(:creator state)] []))
+                        (= requires (if (and state (not constructor?)) [(:creator state)] []))
                         (every? seen requires)) "Invalid handle or construction dependency")
-         (require! (case family
-                     "byte-buffer" (if read? (empty? arguments)
-                                       (and (= operation "wrap") (= 1 (count arguments))
-                                            (or (= token "n:") (str/starts-with? token "b:"))))
-                     "string" (and (= operation "hash") (= 1 (count arguments))
-                                   (or (= token "n:") (str/starts-with? token "u:")))
-                     "long" (and (= operation "hash") (= 1 (count arguments))
-                                 (str/starts-with? token "i:")
-                                 (<= Long/MIN_VALUE (bigint (subs token 2)) Long/MAX_VALUE))
-                     "file" (and (= operation "inspect") (= 1 (count arguments))
-                                 (or (= token "n:") (str/starts-with? token "u:")))
-                     false) "Invalid operation domain")
+         (require! (operation-domain? family operation arguments) "Invalid operation domain")
          (doseq [arg arguments]
            (when (contains? #{\b \u} (first arg))
              (require! (<= (quot (- (count arg) 2) (if (= \b (first arg)) 2 4))

@@ -125,6 +125,23 @@ The initial operations are:
 | `file` | `open` | pathname or null | First byte or file-opening exception; absent state |
 | `file` | `list-count` | pathname or null | Child count, without comparing order, or null; absent state |
 
+Stateful I/O families extend that same wire contract:
+
+| Family | Operations | Observed state |
+| --- | --- | --- |
+| `byte-array-input` | `open`, `read-one`, `read-buffer`, `skip`, `available`, `mark`, `reset`, `mark-supported`, `close` | Relative cursor, available bytes, close invocation, and the complete sentinel buffer |
+| `filter-input` | the corresponding filter operations | Controlled-source cursor/remaining bytes, closed state, and the complete sentinel buffer |
+| `byte-array-output` | `open`, `write-one`, `write-buffer`, `size`, `reset`, `close` | Exact accumulated bytes, size, and close invocation |
+| `filter-output` | `open`, `write-one`, `write-buffer`, `flush`, `close` | Exact partial output, closed state, and flush count |
+| `random-access` | `open`, reads, `read-fully`, writes, `seek`, `skip`, `length`, `position`, `set-length`, `close` | File pointer, exact file bytes/length, and the complete sentinel buffer |
+
+The filter adapters receive the recorded bytes, maximum read chunk, and failure
+position. They deliberately expose short reads and failures after partial
+progress. Byte-array and random-access cases separately preserve zero-length,
+EOF, offset/length, seek, mark/reset, and concrete post-close contracts. Byte
+results are unsigned `int` values while sentinel buffers retain signed storage
+as exact byte tokens. `eof`, `index-out-of-bounds`, and `io` remain distinct.
+
 A buffer case begins without a buffer; reads before a successful wrap therefore
 observe a null reference. A failed wrap preserves any previous buffer. Exceptions
 are observed at each operation and execution continues. Semantic categories
@@ -179,7 +196,10 @@ reducer needs stable observation IDs, resource dependencies, and preserved
 exception intent. No additional dependency or automatic campaign is installed.
 The generator supports boundary-biased byte arrays, signed 64-bit integers,
 UTF-16 strings (including isolated surrogates), pathname strings, and interleaved
-variable-length operation sequences. The explicit `file` family generates
+variable-length operation sequences. Its state machines include byte-array
+input, controlled filter input, and random access with construction/use handles,
+close state, cursor movement, injected failures, partial EOF, and file growth.
+The explicit `file` family generates
 lexical constructor/query observations, including empty, whitespace, separator,
 parent-segment, and embedded-NUL pathnames. Recorded file operations exercise
 the controlled filesystem sandbox separately. Public `FileInfo` adaptation
@@ -213,6 +233,15 @@ A deterministic file-only sample is selected explicitly and remains local:
 ```sh
 DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M \
   -m dripsharp.differential-campaign --family file --seed 1 --count 10
+```
+
+Stateful I/O exploration uses the same replay and shrink path, for example:
+
+```sh
+DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M \
+  -m dripsharp.differential-campaign --family filter-input --seed 4 --count 10
+DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M \
+  -m dripsharp.differential-campaign --family random-access --seed 0 --count 10
 ```
 
 Each campaign builds its fixed Java and .NET runners once, with the current

@@ -29,6 +29,149 @@ internal static class Program
         string Id,
         string Value);
 
+    private sealed class ControlledInputStream : Stream
+    {
+        private readonly byte[] data;
+        private readonly int maxChunk;
+        private readonly int failurePosition;
+        private int position;
+
+        internal ControlledInputStream(sbyte[] bytes, int maxChunk, int failurePosition)
+        {
+            if (maxChunk <= 0 || failurePosition < -1) throw new ArgumentOutOfRangeException();
+            data = bytes.Select(value => unchecked((byte)value)).ToArray();
+            this.maxChunk = maxChunk;
+            this.failurePosition = failurePosition;
+        }
+
+        internal bool Closed { get; private set; }
+        internal int Cursor => position;
+        internal int Remaining => Math.Max(0, data.Length - position);
+        public override bool CanRead => !Closed;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        public override long Length { get { ThrowIfClosed(); return data.Length; } }
+        public override long Position
+        {
+            get { ThrowIfClosed(); return position; }
+            set
+            {
+                ThrowIfClosed();
+                if (value < 0 || value > data.Length) throw new IOException("Invalid controlled position");
+                position = checked((int)value);
+            }
+        }
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            ThrowIfClosed();
+            ArgumentNullException.ThrowIfNull(buffer);
+            if (offset < 0 || count < 0 || offset > buffer.Length - count)
+                throw new ArgumentOutOfRangeException();
+            if (count == 0) return 0;
+            if (failurePosition >= 0 && position >= failurePosition)
+                throw new IOException("Injected read failure");
+            if (position >= data.Length) return 0;
+            var untilFailure = failurePosition < 0 ? int.MaxValue : failurePosition - position;
+            var actual = Math.Min(count, Math.Min(maxChunk, Math.Min(Remaining, untilFailure)));
+            if (actual <= 0) throw new IOException("Injected read failure");
+            Array.Copy(data, position, buffer, offset, actual);
+            position += actual;
+            return actual;
+        }
+        public override int ReadByte()
+        {
+            var one = new byte[1];
+            return Read(one, 0, 1) == 0 ? -1 : one[0];
+        }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            var target = origin switch
+            {
+                SeekOrigin.Begin => offset,
+                SeekOrigin.Current => position + offset,
+                SeekOrigin.End => data.Length + offset,
+                _ => throw new ArgumentOutOfRangeException(nameof(origin))
+            };
+            Position = Math.Min(data.Length, target);
+            return position;
+        }
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing) { Closed = true; base.Dispose(disposing); }
+        private void ThrowIfClosed() { if (Closed) throw new IOException("Controlled input is closed"); }
+    }
+
+    private sealed class ProbeFilterInputStream : JavaFilterInputStream
+    {
+        internal ProbeFilterInputStream(Stream input) : base(input) { }
+    }
+
+    private sealed class ControlledOutputStream : Stream
+    {
+        private readonly MemoryStream bytes = new();
+        private readonly int failurePosition;
+        internal ControlledOutputStream(int failurePosition)
+        {
+            if (failurePosition < -1) throw new ArgumentOutOfRangeException(nameof(failurePosition));
+            this.failurePosition = failurePosition;
+        }
+        internal bool Closed { get; private set; }
+        internal int Flushes { get; private set; }
+        internal byte[] Bytes => bytes.ToArray();
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => !Closed;
+        public override long Length => bytes.Length;
+        public override long Position { get => bytes.Position; set => throw new NotSupportedException(); }
+        public override void Flush() { ThrowIfClosed(); Flushes++; }
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            ThrowIfClosed();
+            ArgumentNullException.ThrowIfNull(buffer);
+            if (offset < 0 || count < 0 || offset > buffer.Length - count)
+                throw new ArgumentOutOfRangeException();
+            for (var index = 0; index < count; index++)
+            {
+                if (failurePosition >= 0 && bytes.Length >= failurePosition)
+                    throw new IOException("Injected write failure");
+                bytes.WriteByte(buffer[offset + index]);
+            }
+        }
+        public override void WriteByte(byte value)
+        {
+            var one = new[] { value };
+            Write(one, 0, 1);
+        }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing) { Closed = true; base.Dispose(disposing); }
+        private void ThrowIfClosed() { if (Closed) throw new IOException("Controlled output is closed"); }
+    }
+
+    private sealed class ProbeFilterOutputStream : JavaFilterOutputStream
+    {
+        internal ProbeFilterOutputStream(Stream output) : base(output) { }
+    }
+
+    private sealed record InputCase(Stream Stream, ControlledInputStream? Controlled, int ViewLength)
+    {
+        internal sbyte[]? LastBuffer { get; set; }
+        internal bool CloseInvoked { get; set; }
+    }
+
+    private sealed record OutputCase(Stream Stream, ControlledOutputStream? Controlled)
+    {
+        internal bool CloseInvoked { get; set; }
+    }
+
+    private sealed record RandomCase(JavaRandomAccessFile File, string Path)
+    {
+        internal sbyte[]? LastBuffer { get; set; }
+        internal bool Closed { get; set; }
+    }
+
     private static int Main(string[] arguments)
     {
         try
@@ -100,6 +243,47 @@ internal static class Program
         : "u:" + string.Concat(value.Select(character =>
             ((int)character).ToString("x4", CultureInfo.InvariantCulture)));
 
+    private static int IntValue(object? value) => checked((int)(System.Numerics.BigInteger)value!);
+    private static long LongValue(object? value) => checked((long)(System.Numerics.BigInteger)value!);
+    private static string Hex(IEnumerable<sbyte> values) =>
+        Convert.ToHexString(values.Select(value => unchecked((byte)value)).ToArray()).ToLowerInvariant();
+    private static string Hex(IEnumerable<byte> values) =>
+        Convert.ToHexString(values.ToArray()).ToLowerInvariant();
+    private static string BufferResult(int count, sbyte[] buffer) =>
+        StringToken(count.ToString(CultureInfo.InvariantCulture) + "|" + Hex(buffer));
+
+    private static string InputState(InputCase? input)
+    {
+        if (input is null) return "n:";
+        var buffer = input.LastBuffer is null ? "-" : Hex(input.LastBuffer);
+        if (input.Controlled is { } controlled)
+            return StringToken(string.Join("|", controlled.Cursor, controlled.Remaining,
+                controlled.Closed.ToString().ToLowerInvariant(), buffer));
+        var available = JavaCompat.InputStreamAvailable(input.Stream);
+        return StringToken(string.Join("|", input.ViewLength - available, available,
+            input.CloseInvoked.ToString().ToLowerInvariant(), buffer));
+    }
+
+    private static string OutputState(OutputCase? output)
+    {
+        if (output is null) return "n:";
+        if (output.Controlled is { } controlled)
+            return StringToken(string.Join("|", controlled.Bytes.Length, Hex(controlled.Bytes),
+                controlled.Closed.ToString().ToLowerInvariant(), controlled.Flushes));
+        var bytes = ((JavaByteArrayOutputStream)output.Stream).ToArray();
+        return StringToken(string.Join("|", bytes.Length, Hex(bytes),
+            output.CloseInvoked.ToString().ToLowerInvariant()));
+    }
+
+    private static string RandomState(RandomCase? random)
+    {
+        if (random is null) return "n:";
+        var pointer = random.Closed ? "closed" : random.File.getFilePointer().ToString(CultureInfo.InvariantCulture);
+        var bytes = File.ReadAllBytes(random.Path);
+        var buffer = random.LastBuffer is null ? "-" : Hex(random.LastBuffer);
+        return StringToken(string.Join("|", pointer, bytes.Length, Hex(bytes), buffer));
+    }
+
     private static string FileInspection(JavaFile file) => string.Join("\u0001",
         file.Pathname, file.Name, file.Parent ?? "\u0002",
         file.IsAbsolute.ToString().ToLowerInvariant(), file.Exists.ToString().ToLowerInvariant(),
@@ -130,6 +314,9 @@ internal static class Program
             throw new InvalidDataException("Invalid cases header or empty input");
         var results = new List<string> { "DRIPSHARP_DIFFERENTIAL_CASE_RESULTS_V1" };
         var buffers = new Dictionary<string, JavaByteBuffer>();
+        var inputs = new Dictionary<string, InputCase>();
+        var outputs = new Dictionary<string, OutputCase>();
+        var randoms = new Dictionary<string, RandomCase>();
         var identities = new HashSet<string>();
         var sandboxParent = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(input))!, "file-sandboxes");
         if (Directory.Exists(sandboxParent)) Directory.Delete(sandboxParent, true);
@@ -150,6 +337,30 @@ internal static class Program
                 {
                     "byte-buffer/wrap" or "string/hash" or "long/hash" => 1,
                     "byte-buffer/get" or "byte-buffer/get-int" => 0,
+                    "byte-array-input/open" => 3,
+                    "filter-input/open" => 3,
+                    "byte-array-input/read-buffer" or "filter-input/read-buffer" => 3,
+                    "byte-array-input/skip" or "filter-input/skip" or
+                    "byte-array-input/mark" or "filter-input/mark" => 1,
+                    "byte-array-input/read-one" or "filter-input/read-one" or
+                    "byte-array-input/available" or "filter-input/available" or
+                    "byte-array-input/mark-supported" or "filter-input/mark-supported" or
+                    "byte-array-input/reset" or "filter-input/reset" or
+                    "byte-array-input/close" or "filter-input/close" => 0,
+                    "byte-array-output/open" => 1,
+                    "filter-output/open" => 1,
+                    "byte-array-output/write-one" or "filter-output/write-one" => 1,
+                    "byte-array-output/write-buffer" or "filter-output/write-buffer" => 3,
+                    "byte-array-output/size" or "byte-array-output/reset" or
+                    "byte-array-output/close" or "filter-output/flush" or
+                    "filter-output/close" => 0,
+                    "random-access/open" => 2,
+                    "random-access/read-buffer" => 3,
+                    "random-access/read-fully" or "random-access/write-buffer" => 1,
+                    "random-access/seek" or "random-access/set-length" or
+                    "random-access/skip" => 1,
+                    "random-access/read-one" or "random-access/length" or
+                    "random-access/position" or "random-access/close" => 0,
                     "file/inspect" or "file/absolute" or "file/uri" or "file/to-path" or
                     "file/create" or "file/delete" or "file/open" or "file/list-count" => 1,
                     "file/parent-child" or "file/file-parent-child" or "file/equals" => 2,
@@ -161,6 +372,8 @@ internal static class Program
                 if (operation == "byte-buffer/wrap" && values[0] is not null and not sbyte[] ||
                     operation == "string/hash" && values[0] is not null and not string ||
                     operation == "long/hash" && values[0] is not System.Numerics.BigInteger ||
+                    operation is "byte-array-input/open" or "filter-input/open" &&
+                    values[0] is not sbyte[] ||
                     operation.StartsWith("file/", StringComparison.Ordinal) &&
                     values.Any(value => value is not null and not string))
                     throw new InvalidDataException("Wrong argument type");
@@ -173,6 +386,9 @@ internal static class Program
                 var result = "n:";
                 var exception = "none";
                 buffers.TryGetValue(key, out var buffer);
+                inputs.TryGetValue(key, out var inputCase);
+                outputs.TryGetValue(key, out var outputCase);
+                randoms.TryGetValue(key, out var randomCase);
                 try
                 {
                     switch (operation)
@@ -184,6 +400,152 @@ internal static class Program
                             break;
                         case "byte-buffer/get": result = "i:" + buffer!.get().ToString(CultureInfo.InvariantCulture); break;
                         case "byte-buffer/get-int": result = "i:" + buffer!.getInt().ToString(CultureInfo.InvariantCulture); break;
+                        case "byte-array-input/open":
+                            inputCase?.Stream.Dispose();
+                            inputs[key] = inputCase = new InputCase(JavaCompat.NewMemoryStream(
+                                (sbyte[])values[0]!, IntValue(values[1]), IntValue(values[2])), null,
+                                IntValue(values[2]));
+                            break;
+                        case "filter-input/open":
+                            inputCase?.Stream.Dispose();
+                            var controlledInput = new ControlledInputStream(
+                                (sbyte[])values[0]!, IntValue(values[1]), IntValue(values[2]));
+                            inputs[key] = inputCase = new InputCase(
+                                new ProbeFilterInputStream(controlledInput), controlledInput,
+                                ((sbyte[])values[0]!).Length);
+                            break;
+                        case "byte-array-input/read-one":
+                        case "filter-input/read-one":
+                            var one = operation.StartsWith("filter-", StringComparison.Ordinal)
+                                ? ((JavaFilterInputStream)inputCase!.Stream).Read()
+                                : JavaCompat.InputStreamRead(inputCase!.Stream);
+                            result = "i:" + one
+                                .ToString(CultureInfo.InvariantCulture);
+                            break;
+                        case "byte-array-input/read-buffer":
+                        case "filter-input/read-buffer":
+                            inputCase!.LastBuffer = ((sbyte[])values[0]!).ToArray();
+                            var read = operation.StartsWith("filter-", StringComparison.Ordinal)
+                                ? ((JavaFilterInputStream)inputCase.Stream).Read(inputCase.LastBuffer,
+                                    IntValue(values[1]), IntValue(values[2]))
+                                : JavaCompat.InputStreamRead(inputCase.Stream, inputCase.LastBuffer,
+                                    IntValue(values[1]), IntValue(values[2]));
+                            result = BufferResult(read, inputCase.LastBuffer);
+                            break;
+                        case "byte-array-input/skip":
+                        case "filter-input/skip":
+                            var skipped = operation.StartsWith("filter-", StringComparison.Ordinal)
+                                ? ((JavaFilterInputStream)inputCase!.Stream).Skip(LongValue(values[0]))
+                                : JavaCompat.InputStreamSkip(inputCase!.Stream, LongValue(values[0]));
+                            result = "i:" + skipped
+                                .ToString(CultureInfo.InvariantCulture);
+                            break;
+                        case "byte-array-input/available":
+                        case "filter-input/available":
+                            var available = operation.StartsWith("filter-", StringComparison.Ordinal)
+                                ? ((JavaFilterInputStream)inputCase!.Stream).Available()
+                                : JavaCompat.InputStreamAvailable(inputCase!.Stream);
+                            result = "i:" + available
+                                .ToString(CultureInfo.InvariantCulture);
+                            break;
+                        case "byte-array-input/mark":
+                        case "filter-input/mark":
+                            if (operation.StartsWith("filter-", StringComparison.Ordinal))
+                                ((JavaFilterInputStream)inputCase!.Stream).Mark(IntValue(values[0]));
+                            else JavaCompat.InputStreamMark(inputCase!.Stream, IntValue(values[0]));
+                            break;
+                        case "byte-array-input/reset":
+                        case "filter-input/reset":
+                            if (operation.StartsWith("filter-", StringComparison.Ordinal))
+                                ((JavaFilterInputStream)inputCase!.Stream).Reset();
+                            else JavaCompat.InputStreamReset(inputCase!.Stream);
+                            break;
+                        case "byte-array-input/mark-supported":
+                        case "filter-input/mark-supported":
+                            var supported = operation.StartsWith("filter-", StringComparison.Ordinal)
+                                ? ((JavaFilterInputStream)inputCase!.Stream).MarkSupported()
+                                : JavaCompat.InputStreamMarkSupported(inputCase!.Stream);
+                            result = "i:" + (supported ? "1" : "0");
+                            break;
+                        case "byte-array-input/close":
+                        case "filter-input/close":
+                            inputCase!.CloseInvoked = true;
+                            inputCase.Stream.Dispose();
+                            break;
+                        case "byte-array-output/open":
+                            outputCase?.Stream.Dispose();
+                            outputs[key] = outputCase = new OutputCase(
+                                new JavaByteArrayOutputStream(IntValue(values[0])), null);
+                            break;
+                        case "filter-output/open":
+                            outputCase?.Stream.Dispose();
+                            var controlledOutput = new ControlledOutputStream(IntValue(values[0]));
+                            outputs[key] = outputCase = new OutputCase(
+                                new ProbeFilterOutputStream(controlledOutput), controlledOutput);
+                            break;
+                        case "byte-array-output/write-one":
+                        case "filter-output/write-one":
+                            JavaCompat.OutputStreamWrite(outputCase!.Stream, IntValue(values[0]));
+                            break;
+                        case "byte-array-output/write-buffer":
+                        case "filter-output/write-buffer":
+                            JavaCompat.OutputStreamWrite(outputCase!.Stream, (sbyte[])values[0]!,
+                                IntValue(values[1]), IntValue(values[2]));
+                            break;
+                        case "byte-array-output/size":
+                            result = "i:" + ((JavaByteArrayOutputStream)outputCase!.Stream).Length
+                                .ToString(CultureInfo.InvariantCulture);
+                            break;
+                        case "byte-array-output/reset":
+                            JavaCompat.ResetMemoryStream((MemoryStream)outputCase!.Stream);
+                            break;
+                        case "filter-output/flush": outputCase!.Stream.Flush(); break;
+                        case "byte-array-output/close":
+                        case "filter-output/close":
+                            outputCase!.CloseInvoked = true;
+                            outputCase.Stream.Dispose();
+                            break;
+                        case "random-access/open":
+                            if (randomCase is not null) randomCase.File.Dispose();
+                            var randomPath = Path.Combine(FileCaseRoot(input, fields[1]), "random.bin");
+                            File.WriteAllBytes(randomPath, ((sbyte[])values[0]!)
+                                .Select(value => unchecked((byte)value)).ToArray());
+                            randoms[key] = randomCase = new RandomCase(
+                                new JavaRandomAccessFile(new JavaFile(randomPath), (string)values[1]!), randomPath);
+                            break;
+                        case "random-access/read-one":
+                            result = "i:" + randomCase!.File.read().ToString(CultureInfo.InvariantCulture);
+                            break;
+                        case "random-access/read-buffer":
+                            randomCase!.LastBuffer = ((sbyte[])values[0]!).ToArray();
+                            var randomRead = randomCase.File.read(randomCase.LastBuffer,
+                                IntValue(values[1]), IntValue(values[2]));
+                            result = BufferResult(randomRead, randomCase.LastBuffer);
+                            break;
+                        case "random-access/read-fully":
+                            randomCase!.LastBuffer = ((sbyte[])values[0]!).ToArray();
+                            randomCase.File.readFully(randomCase.LastBuffer);
+                            result = StringToken(Hex(randomCase.LastBuffer));
+                            break;
+                        case "random-access/write-buffer":
+                            randomCase!.File.write((sbyte[])values[0]!);
+                            break;
+                        case "random-access/seek": randomCase!.File.seek(LongValue(values[0])); break;
+                        case "random-access/skip":
+                            result = "i:" + randomCase!.File.skipBytes(IntValue(values[0]))
+                                .ToString(CultureInfo.InvariantCulture);
+                            break;
+                        case "random-access/length":
+                            result = "i:" + randomCase!.File.length().ToString(CultureInfo.InvariantCulture);
+                            break;
+                        case "random-access/position":
+                            result = "i:" + randomCase!.File.getFilePointer().ToString(CultureInfo.InvariantCulture);
+                            break;
+                        case "random-access/set-length": randomCase!.File.setLength(LongValue(values[0])); break;
+                        case "random-access/close":
+                            randomCase!.Closed = true;
+                            randomCase.File.close();
+                            break;
                         case "string/hash": result = "i:" + JavaCompat.StringHashCode((string)values[0]!).ToString(CultureInfo.InvariantCulture); break;
                         case "long/hash": result = "i:" + JavaCompat.LongHashCode(number).ToString(CultureInfo.InvariantCulture); break;
                         case "file/inspect": result = StringToken(FileInspection(new JavaFile((string)values[0]!))); break;
@@ -208,11 +570,19 @@ internal static class Program
                 }
                 catch (ArgumentNullException) { exception = "null-pointer"; }
                 catch (NullReferenceException) { exception = "null-pointer"; }
-                catch (EndOfStreamException) { exception = "buffer-underflow"; }
+                catch (EndOfStreamException) { exception = operation.StartsWith("random-access/", StringComparison.Ordinal) ? "eof" : "buffer-underflow"; }
                 catch (FileNotFoundException) { exception = "file-not-found"; }
+                catch (IndexOutOfRangeException) { exception = "index-out-of-bounds"; }
+                catch (ArgumentOutOfRangeException) { exception = "index-out-of-bounds"; }
                 catch (ArgumentException) { exception = operation == "file/to-path" ? "invalid-path" : "illegal-argument"; }
                 catch (IOException) { exception = "io"; }
-                var state = buffer is null ? "n:" : "i:" + buffer.position().ToString(CultureInfo.InvariantCulture);
+                var state = fields[0] switch
+                {
+                    "byte-array-input" or "filter-input" => InputState(inputCase),
+                    "byte-array-output" or "filter-output" => OutputState(outputCase),
+                    "random-access" => RandomState(randomCase),
+                    _ => buffer is null ? "n:" : "i:" + buffer.position().ToString(CultureInfo.InvariantCulture)
+                };
                 results.Add(string.Join("\t", fields[0], fields[1], fields[2], fields[3],
                     exception, result, state));
             }
@@ -221,6 +591,9 @@ internal static class Program
         finally
         {
             foreach (var buffer in buffers.Values) buffer.Dispose();
+            foreach (var stream in inputs.Values) stream.Stream.Dispose();
+            foreach (var stream in outputs.Values) stream.Stream.Dispose();
+            foreach (var random in randoms.Values) random.File.Dispose();
             if (Directory.Exists(sandboxParent)) Directory.Delete(sandboxParent, true);
         }
     }

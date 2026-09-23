@@ -1,9 +1,16 @@
 import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
 import java.io.DataOutputStream;
+import java.io.EOFException;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.FilterInputStream;
+import java.io.FilterOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.io.StringReader;
 import java.math.RoundingMode;
 import java.net.URI;
@@ -59,6 +66,111 @@ public final class JavaCompatOracle {
 
   private record Observation(String family, String id, String value) {}
 
+  private static final class ControlledInputStream extends InputStream {
+    private final byte[] data;
+    private final int maxChunk;
+    private final int failurePosition;
+    private int position;
+    private boolean closed;
+
+    ControlledInputStream(byte[] data, int maxChunk, int failurePosition) {
+      if (maxChunk <= 0 || failurePosition < -1) throw new IllegalArgumentException();
+      this.data = data.clone();
+      this.maxChunk = maxChunk;
+      this.failurePosition = failurePosition;
+    }
+    @Override public int read() throws IOException {
+      var one = new byte[1];
+      return read(one, 0, 1) < 0 ? -1 : Byte.toUnsignedInt(one[0]);
+    }
+    @Override public int read(byte[] buffer, int offset, int length) throws IOException {
+      java.util.Objects.checkFromIndexSize(offset, length, buffer.length);
+      checkOpen();
+      if (length == 0) return 0;
+      if (failurePosition >= 0 && position >= failurePosition)
+        throw new IOException("Injected read failure");
+      if (position >= data.length) return -1;
+      int untilFailure = failurePosition < 0 ? Integer.MAX_VALUE : failurePosition - position;
+      int actual = Math.min(length, Math.min(maxChunk, Math.min(data.length - position, untilFailure)));
+      if (actual <= 0) throw new IOException("Injected read failure");
+      System.arraycopy(data, position, buffer, offset, actual);
+      position += actual;
+      return actual;
+    }
+    @Override public long skip(long count) throws IOException {
+      checkOpen();
+      if (count <= 0) return 0;
+      int skipped = (int)Math.min(count, data.length - position);
+      position += skipped;
+      return skipped;
+    }
+    @Override public int available() throws IOException { checkOpen(); return data.length - position; }
+    @Override public void close() { closed = true; }
+    int cursor() { return position; }
+    int remaining() { return Math.max(0, data.length - position); }
+    boolean closed() { return closed; }
+    private void checkOpen() throws IOException { if (closed) throw new IOException("Controlled input is closed"); }
+  }
+
+  private static final class ProbeFilterInputStream extends FilterInputStream {
+    ProbeFilterInputStream(InputStream input) { super(input); }
+  }
+
+  private static final class ControlledOutputStream extends OutputStream {
+    private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    private final int failurePosition;
+    private boolean closed;
+    private int flushes;
+    ControlledOutputStream(int failurePosition) {
+      if (failurePosition < -1) throw new IllegalArgumentException();
+      this.failurePosition = failurePosition;
+    }
+    @Override public void write(int value) throws IOException {
+      checkOpen();
+      if (failurePosition >= 0 && bytes.size() >= failurePosition)
+        throw new IOException("Injected write failure");
+      bytes.write(value);
+    }
+    @Override public void flush() throws IOException { checkOpen(); flushes++; }
+    @Override public void close() { closed = true; }
+    byte[] bytes() { return bytes.toByteArray(); }
+    boolean closed() { return closed; }
+    int flushes() { return flushes; }
+    private void checkOpen() throws IOException { if (closed) throw new IOException("Controlled output is closed"); }
+  }
+
+  private static final class ProbeFilterOutputStream extends FilterOutputStream {
+    ProbeFilterOutputStream(OutputStream output) { super(output); }
+  }
+
+  private static final class InputCase {
+    final InputStream stream;
+    final ControlledInputStream controlled;
+    final int viewLength;
+    byte[] lastBuffer;
+    boolean closeInvoked;
+    InputCase(InputStream stream, ControlledInputStream controlled, int viewLength) {
+      this.stream = stream; this.controlled = controlled; this.viewLength = viewLength;
+    }
+  }
+
+  private static final class OutputCase {
+    final OutputStream stream;
+    final ControlledOutputStream controlled;
+    boolean closeInvoked;
+    OutputCase(OutputStream stream, ControlledOutputStream controlled) {
+      this.stream = stream; this.controlled = controlled;
+    }
+  }
+
+  private static final class RandomCase {
+    final RandomAccessFile file;
+    final Path path;
+    byte[] lastBuffer;
+    boolean closed;
+    RandomCase(RandomAccessFile file, Path path) { this.file = file; this.path = path; }
+  }
+
   // Inputs are ASCII typed tokens, never JSON numbers or Unicode scalars.
   private static Object caseValue(String token) {
     if (token.equals("n:")) return null;
@@ -81,6 +193,42 @@ public final class JavaCompatOracle {
     for (int i = 0; i < value.length(); i++)
       token.append(String.format(Locale.ROOT, "%04x", (int)value.charAt(i)));
     return token.toString();
+  }
+
+  private static int intValue(Object value) { return ((java.math.BigInteger)value).intValueExact(); }
+  private static long longValue(Object value) { return ((java.math.BigInteger)value).longValueExact(); }
+  private static String bufferResult(int count, byte[] buffer) {
+    return stringToken(Integer.toString(count) + "|" + HexFormat.of().formatHex(buffer));
+  }
+  private static String inputState(InputCase input) throws IOException {
+    if (input == null) return "n:";
+    var buffer = input.lastBuffer == null ? "-" : HexFormat.of().formatHex(input.lastBuffer);
+    if (input.controlled != null)
+      return stringToken(String.join("|", Integer.toString(input.controlled.cursor()),
+          Integer.toString(input.controlled.remaining()), Boolean.toString(input.controlled.closed()), buffer));
+    int available = input.stream.available();
+    return stringToken(String.join("|", Integer.toString(input.viewLength - available),
+        Integer.toString(available), Boolean.toString(input.closeInvoked), buffer));
+  }
+  private static String outputState(OutputCase output) {
+    if (output == null) return "n:";
+    if (output.controlled != null) {
+      byte[] bytes = output.controlled.bytes();
+      return stringToken(String.join("|", Integer.toString(bytes.length),
+          HexFormat.of().formatHex(bytes), Boolean.toString(output.controlled.closed()),
+          Integer.toString(output.controlled.flushes())));
+    }
+    byte[] bytes = ((ByteArrayOutputStream)output.stream).toByteArray();
+    return stringToken(String.join("|", Integer.toString(bytes.length),
+        HexFormat.of().formatHex(bytes), Boolean.toString(output.closeInvoked)));
+  }
+  private static String randomState(RandomCase random) throws IOException {
+    if (random == null) return "n:";
+    String pointer = random.closed ? "closed" : Long.toString(random.file.getFilePointer());
+    byte[] bytes = Files.readAllBytes(random.path);
+    String buffer = random.lastBuffer == null ? "-" : HexFormat.of().formatHex(random.lastBuffer);
+    return stringToken(String.join("|", pointer, Integer.toString(bytes.length),
+        HexFormat.of().formatHex(bytes), buffer));
   }
 
   private static String fileInspection(File file) {
@@ -119,6 +267,9 @@ public final class JavaCompatOracle {
     var results = new ArrayList<String>();
     results.add("DRIPSHARP_DIFFERENTIAL_CASE_RESULTS_V1");
     var buffers = new java.util.HashMap<String, ByteBuffer>();
+    var inputs = new java.util.HashMap<String, InputCase>();
+    var outputs = new java.util.HashMap<String, OutputCase>();
+    var randoms = new java.util.HashMap<String, RandomCase>();
     var identities = new java.util.HashSet<String>();
     var sandboxParent = input.toAbsolutePath().getParent().resolve("file-sandboxes");
     deleteTree(sandboxParent);
@@ -136,6 +287,26 @@ public final class JavaCompatOracle {
       int arity = switch (operation) {
         case "byte-buffer/wrap", "string/hash", "long/hash" -> 1;
         case "byte-buffer/get", "byte-buffer/get-int" -> 0;
+        case "byte-array-input/open", "filter-input/open",
+             "byte-array-input/read-buffer", "filter-input/read-buffer",
+             "byte-array-output/write-buffer", "filter-output/write-buffer",
+             "random-access/read-buffer" -> 3;
+        case "byte-array-input/skip", "filter-input/skip",
+             "byte-array-input/mark", "filter-input/mark",
+             "byte-array-output/open", "filter-output/open",
+             "byte-array-output/write-one", "filter-output/write-one",
+             "random-access/read-fully", "random-access/write-buffer",
+             "random-access/seek", "random-access/set-length", "random-access/skip" -> 1;
+        case "byte-array-input/read-one", "filter-input/read-one",
+             "byte-array-input/available", "filter-input/available",
+             "byte-array-input/mark-supported", "filter-input/mark-supported",
+             "byte-array-input/reset", "filter-input/reset",
+             "byte-array-input/close", "filter-input/close",
+             "byte-array-output/size", "byte-array-output/reset", "byte-array-output/close",
+             "filter-output/flush", "filter-output/close",
+             "random-access/read-one", "random-access/length",
+             "random-access/position", "random-access/close" -> 0;
+        case "random-access/open" -> 2;
         case "file/inspect", "file/absolute", "file/uri", "file/to-path",
              "file/create", "file/delete", "file/open", "file/list-count" -> 1;
         case "file/parent-child", "file/file-parent-child", "file/equals" -> 2;
@@ -149,6 +320,8 @@ public final class JavaCompatOracle {
       if (operation.equals("byte-buffer/wrap") && values[0] != null && !(values[0] instanceof byte[])
           || operation.equals("string/hash") && values[0] != null && !(values[0] instanceof String)
           || operation.equals("long/hash") && !(values[0] instanceof java.math.BigInteger)
+          || (operation.equals("byte-array-input/open") || operation.equals("filter-input/open"))
+              && !(values[0] instanceof byte[])
           || operation.startsWith("file/") && java.util.Arrays.stream(values)
               .anyMatch(value -> value != null && !(value instanceof String)))
         throw new IllegalArgumentException("Wrong argument type");
@@ -165,6 +338,90 @@ public final class JavaCompatOracle {
           case "byte-buffer/wrap" -> buffers.put(key, ByteBuffer.wrap((byte[])values[0]));
           case "byte-buffer/get" -> result = "i:" + buffers.get(key).get();
           case "byte-buffer/get-int" -> result = "i:" + buffers.get(key).getInt();
+          case "byte-array-input/open" -> {
+            if (inputs.get(key) != null) inputs.get(key).stream.close();
+            int offset = intValue(values[1]);
+            int length = intValue(values[2]);
+            inputs.put(key, new InputCase(new ByteArrayInputStream((byte[])values[0], offset, length),
+                null, Math.min(length, ((byte[])values[0]).length - offset)));
+          }
+          case "filter-input/open" -> {
+            if (inputs.get(key) != null) inputs.get(key).stream.close();
+            var controlled = new ControlledInputStream((byte[])values[0], intValue(values[1]), intValue(values[2]));
+            inputs.put(key, new InputCase(new ProbeFilterInputStream(controlled), controlled,
+                ((byte[])values[0]).length));
+          }
+          case "byte-array-input/read-one", "filter-input/read-one" ->
+              result = "i:" + inputs.get(key).stream.read();
+          case "byte-array-input/read-buffer", "filter-input/read-buffer" -> {
+            var stream = inputs.get(key);
+            stream.lastBuffer = ((byte[])values[0]).clone();
+            int read = stream.stream.read(stream.lastBuffer, intValue(values[1]), intValue(values[2]));
+            result = bufferResult(read, stream.lastBuffer);
+          }
+          case "byte-array-input/skip", "filter-input/skip" ->
+              result = "i:" + inputs.get(key).stream.skip(longValue(values[0]));
+          case "byte-array-input/available", "filter-input/available" ->
+              result = "i:" + inputs.get(key).stream.available();
+          case "byte-array-input/mark", "filter-input/mark" ->
+              inputs.get(key).stream.mark(intValue(values[0]));
+          case "byte-array-input/reset", "filter-input/reset" -> inputs.get(key).stream.reset();
+          case "byte-array-input/mark-supported", "filter-input/mark-supported" ->
+              result = "i:" + (inputs.get(key).stream.markSupported() ? 1 : 0);
+          case "byte-array-input/close", "filter-input/close" -> {
+            inputs.get(key).closeInvoked = true;
+            inputs.get(key).stream.close();
+          }
+          case "byte-array-output/open" -> {
+            if (outputs.get(key) != null) outputs.get(key).stream.close();
+            outputs.put(key, new OutputCase(new ByteArrayOutputStream(intValue(values[0])), null));
+          }
+          case "filter-output/open" -> {
+            if (outputs.get(key) != null) outputs.get(key).stream.close();
+            var controlled = new ControlledOutputStream(intValue(values[0]));
+            outputs.put(key, new OutputCase(new ProbeFilterOutputStream(controlled), controlled));
+          }
+          case "byte-array-output/write-one", "filter-output/write-one" ->
+              outputs.get(key).stream.write(intValue(values[0]));
+          case "byte-array-output/write-buffer", "filter-output/write-buffer" ->
+              outputs.get(key).stream.write((byte[])values[0], intValue(values[1]), intValue(values[2]));
+          case "byte-array-output/size" ->
+              result = "i:" + ((ByteArrayOutputStream)outputs.get(key).stream).size();
+          case "byte-array-output/reset" -> ((ByteArrayOutputStream)outputs.get(key).stream).reset();
+          case "filter-output/flush" -> outputs.get(key).stream.flush();
+          case "byte-array-output/close", "filter-output/close" -> {
+            outputs.get(key).closeInvoked = true;
+            outputs.get(key).stream.close();
+          }
+          case "random-access/open" -> {
+            if (randoms.get(key) != null) randoms.get(key).file.close();
+            Path path = fileCaseRoot(input, fields[1]).resolve("random.bin");
+            Files.write(path, (byte[])values[0]);
+            randoms.put(key, new RandomCase(new RandomAccessFile(path.toFile(), (String)values[1]), path));
+          }
+          case "random-access/read-one" -> result = "i:" + randoms.get(key).file.read();
+          case "random-access/read-buffer" -> {
+            var random = randoms.get(key);
+            random.lastBuffer = ((byte[])values[0]).clone();
+            int read = random.file.read(random.lastBuffer, intValue(values[1]), intValue(values[2]));
+            result = bufferResult(read, random.lastBuffer);
+          }
+          case "random-access/read-fully" -> {
+            var random = randoms.get(key);
+            random.lastBuffer = ((byte[])values[0]).clone();
+            random.file.readFully(random.lastBuffer);
+            result = stringToken(HexFormat.of().formatHex(random.lastBuffer));
+          }
+          case "random-access/write-buffer" -> randoms.get(key).file.write((byte[])values[0]);
+          case "random-access/seek" -> randoms.get(key).file.seek(longValue(values[0]));
+          case "random-access/skip" -> result = "i:" + randoms.get(key).file.skipBytes(intValue(values[0]));
+          case "random-access/length" -> result = "i:" + randoms.get(key).file.length();
+          case "random-access/position" -> result = "i:" + randoms.get(key).file.getFilePointer();
+          case "random-access/set-length" -> randoms.get(key).file.setLength(longValue(values[0]));
+          case "random-access/close" -> {
+            randoms.get(key).closed = true;
+            randoms.get(key).file.close();
+          }
           case "string/hash" -> result = "i:" + ((String)values[0]).hashCode();
           case "long/hash" -> result = "i:" + Long.hashCode(number);
           case "file/inspect" -> result = stringToken(fileInspection(new File((String)values[0])));
@@ -192,21 +449,33 @@ public final class JavaCompatOracle {
         exception = "null-pointer";
       } catch (java.nio.BufferUnderflowException error) {
         exception = "buffer-underflow";
+      } catch (EOFException error) {
+        exception = "eof";
       } catch (InvalidPathException error) {
         exception = "invalid-path";
       } catch (FileNotFoundException error) {
         exception = "file-not-found";
+      } catch (IndexOutOfBoundsException error) {
+        exception = "index-out-of-bounds";
       } catch (IllegalArgumentException error) {
         exception = "illegal-argument";
       } catch (IOException error) {
         exception = "io";
       }
       var buffer = buffers.get(key);
-      var state = buffer == null ? "n:" : "i:" + buffer.position();
+      var state = switch (fields[0]) {
+        case "byte-array-input", "filter-input" -> inputState(inputs.get(key));
+        case "byte-array-output", "filter-output" -> outputState(outputs.get(key));
+        case "random-access" -> randomState(randoms.get(key));
+        default -> buffer == null ? "n:" : "i:" + buffer.position();
+      };
       results.add(String.join("\t", fields[0], fields[1], fields[2], fields[3],
           exception, result, state));
       }
     } finally {
+      for (var stream : inputs.values()) stream.stream.close();
+      for (var stream : outputs.values()) stream.stream.close();
+      for (var random : randoms.values()) random.file.close();
       deleteTree(sandboxParent);
     }
     Files.writeString(output, String.join("\n", results) + "\n", StandardCharsets.UTF_8);

@@ -65,6 +65,22 @@
     (is (some #(= ["create" "io"]
                   [(:operation %) (:expected-exception %)]) rows))))
 
+(deftest stream-and-random-access-cases-cover-state-failure-and-close-contracts
+  (let [text (slurp "validation/java-compat/cases.tsv")
+        selected #(java-compat/select-cases text {:family %})
+        rows (mapcat selected ["byte-array-input" "filter-input"
+                               "byte-array-output" "filter-output" "random-access"])
+        identities (set (map (juxt :family :case :operation :expected-exception) rows))]
+    (is (= 76 (count rows)))
+    (is (contains? identities ["filter-input" "short-read" "read-buffer" "none"]))
+    (is (contains? identities ["filter-input" "injected-failure" "read-buffer" "io"]))
+    (is (contains? identities ["filter-input" "eof" "read-one" "none"]))
+    (is (contains? identities ["byte-array-input" "boundaries" "reset" "none"]))
+    (is (contains? identities ["byte-array-output" "close-noop" "write-one" "none"]))
+    (is (contains? identities ["filter-output" "zero-and-close" "write-one" "io"]))
+    (is (contains? identities ["random-access" "boundaries" "read-fully" "eof"]))
+    (is (contains? identities ["random-access" "read-only" "write-buffer" "io"]))))
+
 (deftest comparator-requires-values-state-and-exception-timing
   (is (= {:status :passed :matched 3} (compare-output output)))
   (doseq [actual [(str/replace output "i:-1" "i:255")

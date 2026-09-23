@@ -636,19 +636,43 @@ internal sealed class JavaRandomAccessFile : IDisposable
         ThrowIfDisposed();
         return stream.Length;
     }
-    internal void readFully(sbyte[] destination)
+    internal long getFilePointer()
     {
         ThrowIfDisposed();
+        return stream.Position;
+    }
+    internal int read()
+    {
+        ThrowIfDisposed();
+        return stream.ReadByte();
+    }
+    internal int read(sbyte[] destination) =>
+        read(destination, 0, destination.Length);
+    internal int read(sbyte[] destination, int offset, int length)
+    {
         ArgumentNullException.ThrowIfNull(destination);
-        var unsigned = new byte[destination.Length];
+        if (offset < 0 || length < 0 || offset > destination.Length - length)
+            throw new IndexOutOfRangeException();
+        if (length == 0) return 0;
+        ThrowIfDisposed();
+        var unsigned = new byte[length];
+        var count = stream.Read(unsigned, 0, length);
+        if (count == 0) return -1;
+        Buffer.BlockCopy(unsigned, 0, destination, offset, count);
+        return count;
+    }
+    internal void readFully(sbyte[] destination)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        if (destination.Length == 0) return;
+        ThrowIfDisposed();
         var total = 0;
-        while (total < unsigned.Length)
+        while (total < destination.Length)
         {
-            var read = stream.Read(unsigned, total, unsigned.Length - total);
-            if (read == 0) throw new EndOfStreamException();
-            total += read;
+            var count = read(destination, total, destination.Length - total);
+            if (count < 0) throw new EndOfStreamException();
+            total += count;
         }
-        Buffer.BlockCopy(unsigned, 0, destination, 0, unsigned.Length);
     }
     internal void seek(long position)
     {
@@ -659,7 +683,18 @@ internal sealed class JavaRandomAccessFile : IDisposable
     internal void setLength(long length)
     {
         ThrowIfDisposed();
-        stream.SetLength(length);
+        if (length < 0) throw new IOException("Negative file length");
+        try { stream.SetLength(length); }
+        catch (NotSupportedException error) { throw new IOException(error.Message, error); }
+        if (stream.Position > length) stream.Position = length;
+    }
+    internal int skipBytes(int count)
+    {
+        ThrowIfDisposed();
+        if (count <= 0) return 0;
+        var skipped = checked((int)Math.Min(count, Math.Max(0, stream.Length - stream.Position)));
+        stream.Position += skipped;
+        return skipped;
     }
     internal void write(sbyte[] source)
     {
@@ -667,7 +702,12 @@ internal sealed class JavaRandomAccessFile : IDisposable
         ArgumentNullException.ThrowIfNull(source);
         var unsigned = new byte[source.Length];
         Buffer.BlockCopy(source, 0, unsigned, 0, source.Length);
-        stream.Write(unsigned, 0, unsigned.Length);
+        try
+        {
+            stream.Write(unsigned, 0, unsigned.Length);
+            stream.Flush();
+        }
+        catch (NotSupportedException error) { throw new IOException(error.Message, error); }
     }
     internal void close() => Dispose();
     public void Dispose()
@@ -676,7 +716,10 @@ internal sealed class JavaRandomAccessFile : IDisposable
         disposed = true;
         stream.Dispose();
     }
-    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(disposed, this);
+    private void ThrowIfDisposed()
+    {
+        if (disposed) throw new IOException("Random access file is closed.");
+    }
 }
 
 #if DRIPSHARP_INTERNAL_JAVA_COMPAT
@@ -693,8 +736,8 @@ abstract class JavaInputStream : Stream, IDisposable
     public virtual int Read(sbyte[] buffer, int offset, int count)
     {
         ArgumentNullException.ThrowIfNull(buffer);
-        if (offset < 0 || count < 0 || offset + count > buffer.Length)
-            throw new ArgumentOutOfRangeException();
+        if (offset < 0 || count < 0 || offset > buffer.Length - count)
+            throw new IndexOutOfRangeException();
         if (count == 0) return 0;
         var first = Read();
         if (first < 0) return -1;
@@ -803,6 +846,8 @@ abstract class JavaOutputStream : Stream, IDisposable
     public virtual void Write(sbyte[] buffer, int offset, int count)
     {
         ArgumentNullException.ThrowIfNull(buffer);
+        if (offset < 0 || count < 0 || offset > buffer.Length - count)
+            throw new IndexOutOfRangeException();
         for (var index = 0; index < count; index++) Write(buffer[offset + index]);
     }
 
@@ -1081,6 +1126,7 @@ public
 class JavaFilterOutputStream : JavaOutputStream
 {
     protected readonly Stream @out;
+    private bool closed;
 
     protected JavaFilterOutputStream(Stream output) => @out = output;
     public override bool CanWrite => @out.CanWrite;
@@ -1091,8 +1137,17 @@ class JavaFilterOutputStream : JavaOutputStream
 
     public override void Dispose()
     {
-        ((IDisposable)@out).Dispose();
-        base.Dispose();
+        if (closed) return;
+        closed = true;
+        try
+        {
+            Flush();
+        }
+        finally
+        {
+            ((IDisposable)@out).Dispose();
+            base.Dispose();
+        }
     }
 }
 
@@ -1475,6 +1530,9 @@ internal static partial class JavaCompat
         OutputStreamWrite(stream, values, 0, values.Length);
     internal static void OutputStreamWrite(Stream stream, sbyte[] values, int offset, int count)
     {
+        ArgumentNullException.ThrowIfNull(values);
+        if (offset < 0 || count < 0 || offset > values.Length - count)
+            throw new IndexOutOfRangeException();
         var buffer = new byte[count];
         for (var index = 0; index < count; index++)
             buffer[index] = unchecked((byte)values[offset + index]);
@@ -1526,10 +1584,20 @@ internal static partial class JavaCompat
         InputStreamRead(stream, values, 0, values.Length);
     internal static int InputStreamRead(Stream stream, sbyte[] values, int offset, int count)
     {
-        if (count == 0) return 0;
+        ArgumentNullException.ThrowIfNull(stream);
+        ArgumentNullException.ThrowIfNull(values);
+        if (offset < 0 || count < 0 || offset > values.Length - count)
+            throw new IndexOutOfRangeException();
+        if (count == 0)
+            return stream is JavaByteArrayInputStream byteArrayAtBoundary &&
+                   byteArrayAtBoundary.Position >= byteArrayAtBoundary.Length
+                ? -1
+                : 0;
         var buffer = new byte[count];
-        var read = stream.Read(buffer, 0, count);
-        if (read == 0) return -1;
+        var read = stream is JavaByteArrayInputStream byteArray
+            ? byteArray.ReadJava(buffer, 0, count)
+            : stream.Read(buffer, 0, count);
+        if (read <= 0) return read == 0 ? -1 : read;
         for (var index = 0; index < read; index++)
             values[offset + index] = unchecked((sbyte)buffer[index]);
         return read;

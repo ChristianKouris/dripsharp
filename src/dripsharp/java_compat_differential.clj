@@ -415,6 +415,60 @@
    "string" {"hash" {:arguments [#{"u" "n"}]
                      :exceptions #{"none" "null-pointer"}}}
    "long" {"hash" {:arguments [#{"i"}] :exceptions #{"none"}}}
+   "byte-array-input"
+   {"open" {:arguments [#{"b"} #{"i"} #{"i"}]
+            :exceptions #{"none" "null-pointer" "index-out-of-bounds"}}
+    "read-one" {:arguments [] :exceptions #{"none" "null-pointer" "io"}}
+    "read-buffer" {:arguments [#{"b"} #{"i"} #{"i"}]
+                   :exceptions #{"none" "null-pointer" "index-out-of-bounds" "io"}}
+    "skip" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "io"}}
+    "available" {:arguments [] :exceptions #{"none" "null-pointer" "io"}}
+    "mark" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer"}}
+    "reset" {:arguments [] :exceptions #{"none" "null-pointer" "io"}}
+    "mark-supported" {:arguments [] :exceptions #{"none" "null-pointer"}}
+    "close" {:arguments [] :exceptions #{"none" "null-pointer" "io"}}}
+   "filter-input"
+   {"open" {:arguments [#{"b"} #{"i"} #{"i"}]
+            :exceptions #{"none" "null-pointer" "index-out-of-bounds"}}
+    "read-one" {:arguments [] :exceptions #{"none" "null-pointer" "io"}}
+    "read-buffer" {:arguments [#{"b"} #{"i"} #{"i"}]
+                   :exceptions #{"none" "null-pointer" "index-out-of-bounds" "io"}}
+    "skip" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "io"}}
+    "available" {:arguments [] :exceptions #{"none" "null-pointer" "io"}}
+    "mark" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer"}}
+    "reset" {:arguments [] :exceptions #{"none" "null-pointer" "io"}}
+    "mark-supported" {:arguments [] :exceptions #{"none" "null-pointer"}}
+    "close" {:arguments [] :exceptions #{"none" "null-pointer" "io"}}}
+   "byte-array-output"
+   {"open" {:arguments [#{"i"}] :exceptions #{"none" "index-out-of-bounds"}}
+    "write-one" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "io"}}
+    "write-buffer" {:arguments [#{"b"} #{"i"} #{"i"}]
+                    :exceptions #{"none" "null-pointer" "index-out-of-bounds" "io"}}
+    "size" {:arguments [] :exceptions #{"none" "null-pointer"}}
+    "reset" {:arguments [] :exceptions #{"none" "null-pointer"}}
+    "close" {:arguments [] :exceptions #{"none" "null-pointer" "io"}}}
+   "filter-output"
+   {"open" {:arguments [#{"i"}] :exceptions #{"none" "index-out-of-bounds"}}
+    "write-one" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "io"}}
+    "write-buffer" {:arguments [#{"b"} #{"i"} #{"i"}]
+                    :exceptions #{"none" "null-pointer" "index-out-of-bounds" "io"}}
+    "flush" {:arguments [] :exceptions #{"none" "null-pointer" "io"}}
+    "close" {:arguments [] :exceptions #{"none" "null-pointer" "io"}}}
+   "random-access"
+   {"open" {:arguments [#{"b"} #{"u"}]
+            :exceptions #{"none" "null-pointer" "illegal-argument" "file-not-found" "io"}}
+    "read-one" {:arguments [] :exceptions #{"none" "null-pointer" "io"}}
+    "read-buffer" {:arguments [#{"b"} #{"i"} #{"i"}]
+                   :exceptions #{"none" "null-pointer" "index-out-of-bounds" "io"}}
+    "read-fully" {:arguments [#{"b"}]
+                  :exceptions #{"none" "null-pointer" "eof" "io"}}
+    "write-buffer" {:arguments [#{"b"}] :exceptions #{"none" "null-pointer" "io"}}
+    "seek" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "io"}}
+    "skip" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "io"}}
+    "length" {:arguments [] :exceptions #{"none" "null-pointer" "io"}}
+    "position" {:arguments [] :exceptions #{"none" "null-pointer" "io"}}
+    "set-length" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "io"}}
+    "close" {:arguments [] :exceptions #{"none" "null-pointer" "io"}}}
    "file" {"inspect" {:arguments [#{"u" "n"}]
                       :exceptions #{"none" "null-pointer"}}
            "absolute" {:arguments [#{"u" "n"}]

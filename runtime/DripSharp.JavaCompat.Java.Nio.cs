@@ -901,9 +901,28 @@ internal static partial class JavaCompat
         }
         return bytes.Take(offset).Select(value => unchecked((sbyte)value)).ToArray();
     }
+    private sealed class JavaByteArrayInputStream : MemoryStream
+    {
+        internal JavaByteArrayInputStream(byte[] bytes)
+            : base(bytes, writable: false)
+        {
+        }
+
+        internal int ReadJava(byte[] buffer, int offset, int count)
+        {
+            if (Position >= Length) return -1;
+            return Read(buffer, offset, count);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            // java.io.ByteArrayInputStream.close() has no effect. Reads,
+            // available, skip, mark, and reset remain usable after close.
+        }
+    }
     internal static MemoryStream NewMemoryStream(sbyte[] bytes)
     {
-        var stream = new MemoryStream(
+        var stream = new JavaByteArrayInputStream(
             bytes.Select(value => unchecked((byte)value)).ToArray());
         InputStreamMark(stream, int.MaxValue);
         return stream;
@@ -920,7 +939,7 @@ internal static partial class JavaCompat
         ArgumentNullException.ThrowIfNull(bytes);
         if (offset < 0 || length < 0 || offset > bytes.Length - length)
             throw new IndexOutOfRangeException();
-        var stream = new MemoryStream(
+        var stream = new JavaByteArrayInputStream(
             bytes.Skip(offset).Take(length).Select(value => unchecked((byte)value)).ToArray());
         InputStreamMark(stream, int.MaxValue);
         return stream;

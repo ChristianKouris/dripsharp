@@ -56,6 +56,30 @@
     (is (thrown? clojure.lang.ExceptionInfo
                  (gen/generate 1 {:families ["unknown"]})))))
 
+(deftest stateful-stream-and-random-access-generation-is-bounded-and-replayable
+  (doseq [[family required-operations required-exceptions]
+          [["byte-array-input" #{"open" "read-one" "read-buffer" "skip" "available"
+                                 "mark" "reset" "close"}
+            #{"none" "null-pointer"}]
+           ["filter-input" #{"open" "read-one" "read-buffer" "skip" "available"
+                             "mark-supported" "reset" "close"}
+            #{"none" "null-pointer" "io"}]
+           ["byte-array-output" #{"open" "write-one" "write-buffer" "size" "reset" "close"}
+            #{"none" "null-pointer"}]
+           ["filter-output" #{"open" "write-one" "write-buffer" "flush" "close"}
+            #{"none" "null-pointer" "io"}]
+           ["random-access" #{"open" "read-one" "read-buffer" "read-fully"
+                              "write-buffer" "seek" "skip" "length" "position"
+                              "set-length" "close"}
+            #{"none" "null-pointer" "io" "eof"}]]]
+    (let [records (mapv #(gen/generate % {:families [family]}) (range 100))
+          operations (mapcat :operations records)]
+      (is (every? #(= % (gen/validate! %)) records) family)
+      (is (= required-operations (set (map :operation operations))) family)
+      (is (= required-exceptions (set (map :expected-exception operations))) family)
+      (is (every? #(= family (:family %)) operations) family)
+      (is (every? #(<= (count (:operations %)) 32) records) family))))
+
 (deftest boundary-values-preserve-exact-domains
   (doseq [kind [:bytes :integer :string :path]]
     (let [rng (Random. 42) tokens (repeatedly 100 #(gen/value rng kind 8))]
