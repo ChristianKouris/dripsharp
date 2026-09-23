@@ -19,6 +19,7 @@
     dripsharp.source-accountability-test
     dripsharp.authorship-report-test
     dripsharp.bundle-contract-test
+    dripsharp.differential-registry-test
     dripsharp.test-runner-test])
 
 (def test-tiers
@@ -31,7 +32,8 @@
       :project-emission
       :filesystem-cleanup
       :source-accountability
-      :bundle-contract}
+      :bundle-contract
+      :local-differential-policy}
     :namespaces unit-test-namespaces}})
 
 (def ^:dynamic *test-tier* nil)

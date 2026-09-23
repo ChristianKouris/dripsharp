@@ -32,6 +32,19 @@ The separate case mode consumes the **same saved input file** in the JVM and
 availability as executed behavior. Registration in `case-families` is inert.
 No new live checks are added to hosted workflows or default test discovery.
 
+Inspect the process-free family and command registry before choosing a local
+workload. An optional family name prints its exact operations and whether the
+bounded generator supports it:
+
+```sh
+clojure -M:run differential-families
+clojure -M:run differential-families random-access
+```
+
+The registry also records the translated-microprogram, PdfCarton package, and
+generated .NET test entry points. Listing it starts no JVM, .NET process,
+restore, build, package, generation, or differential execution.
+
 After checking available RAM/CPU, run a selected family or complete case from
 the repository root:
 
@@ -219,7 +232,10 @@ After checking RAM/CPU, a focused local campaign is:
 
 ```sh
 DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M \
-  -m dripsharp.differential-campaign --seed 1 --count 10
+  -m dripsharp.differential-campaign --seed 1 --count 10 \
+  --max-operations 32 --max-value-units 32 --max-input-bytes 65536 \
+  --max-processes 200 --max-ms 300000 \
+  --shrink-attempts 100 --shrink-ms 30000
 ```
 
 A broader, still bounded local exploration can use `--count 100
@@ -232,7 +248,10 @@ A deterministic file-only sample is selected explicitly and remains local:
 
 ```sh
 DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M \
-  -m dripsharp.differential-campaign --family file --seed 1 --count 10
+  -m dripsharp.differential-campaign --family file --seed 1 --count 10 \
+  --max-operations 32 --max-value-units 32 --max-input-bytes 65536 \
+  --max-processes 200 --max-ms 300000 \
+  --shrink-attempts 100 --shrink-ms 30000
 ```
 
 Stateful I/O exploration uses the same replay and shrink path, for example:
@@ -283,8 +302,15 @@ Replay the actual saved record, even if its generator or PRNG has changed:
 DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M \
   -m dripsharp.differential-campaign \
   --replay validation-output/generated-cases/campaign-EXAMPLE/minimal.edn \
-  --shrink-attempts 0
+  --max-processes 20 --max-ms 180000 \
+  --shrink-attempts 0 --shrink-ms 1000
 ```
+
+The operation, value-unit, and serialized-input flags override the recorded
+generation limits; the saved record remains authoritative during replay.
+Preparation failures now retain that record and emit the same exact replay
+form as semantic failures. Process output and phase diagnostics remain in the
+result and summary rather than being treated as a skipped or passing case.
 
 The printed replay command selects the saved input; no seed regeneration is
 involved. Replay rebuilds current sources and records current runtime versions.

@@ -19,7 +19,8 @@
            :project-emission
            :filesystem-cleanup
            :source-accountability
-           :bundle-contract}
+           :bundle-contract
+           :local-differential-policy}
          (get-in runner/test-tiers [:unit :capabilities])))
   (doseq [namespace runner/unit-test-namespaces
           :let [source

@@ -1,6 +1,7 @@
 (ns dripsharp.main
   (:require [clojure.string :as str]
             [dripsharp.authorship-portfolio :as authorship-portfolio]
+            [dripsharp.differential-registry :as differential-registry]
             [dripsharp.java-compat-differential :as java-compat-differential]
             [dripsharp.paths :as paths]
             [dripsharp.pdfcube.host-matrix :as pdfcube-host-matrix]
@@ -18,6 +19,7 @@
    "|product-prepare <target> <branch> <commit-message>"
    "|authorship-report <pkl|pdfcube|sqltrellis|all>"
    "|java-compat-differential"
+   "|differential-families [family]"
    "|pdfcube-family-host-matrix <evidence-root> <output-root>"
    "|rebaseline <pkl|pdfcube|rawhttp> [--approve <token>]"))
 
@@ -77,6 +79,11 @@
            (nil? selector)
            (empty? extra))
       (java-compat-differential/verify!)
+
+      (and (= "differential-families" command)
+           (nil? selector)
+           (empty? extra))
+      (differential-registry/print-registry! target)
 
       (and (= "pdfcube-family-host-matrix" command)
            target

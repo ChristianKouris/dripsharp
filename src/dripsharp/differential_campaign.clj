@@ -36,7 +36,40 @@
 
 (defn- replay-command [file]
   (str "DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M -m dripsharp.differential-campaign --replay '"
-       (str/replace (str file) "'" "'\"'\"'") "' --shrink-attempts 0"))
+       (str/replace (str file) "'" "'\"'\"'")
+       "' --max-processes 20 --max-ms 180000 --shrink-attempts 0 --shrink-ms 1000"))
+
+(def cli-usage
+  (str "Expected --seed N --count N or --replay FILE; optional --family NAME, "
+       "--output DIR, --max-operations N, --max-value-units N, "
+       "--max-input-bytes N, --max-processes N, --max-ms N, "
+       "--shrink-attempts N, --shrink-ms N"))
+
+(defn parse-options
+  "Parses the bounded local campaign CLI without starting child processes."
+  [arguments]
+  (loop [args arguments options {}]
+    (if (empty? args)
+      (cond-> options
+        (some #(contains? options %) (keys gen/default-limits))
+        (assoc :generation-limits
+               (merge gen/default-limits (select-keys options (keys gen/default-limits))))
+
+        (some #(contains? options %) (keys gen/default-limits))
+        (#(apply dissoc % (keys gen/default-limits))))
+      (let [[flag value & more] args
+            key (get {"--seed" :seed "--count" :case-count "--family" :family
+                      "--output" :output-directory "--replay" :replay-file
+                      "--max-operations" :max-operations
+                      "--max-value-units" :max-value-units
+                      "--max-input-bytes" :max-input-bytes
+                      "--max-processes" :max-processes "--max-ms" :max-ms
+                      "--shrink-attempts" :shrink-attempts
+                      "--shrink-ms" :shrink-ms} flag)]
+        (when-not (and key value (not (contains? options key)))
+          (throw (ex-info cli-usage {:kind :invalid-arguments})))
+        (recur more (assoc options key (if (#{:family :output-directory :replay-file} key)
+                                         value (parse-long value))))))))
 
 (defn run!
   "Generates and records one input before either implementation sees it. Stops
@@ -113,6 +146,11 @@
                 (swap! counts update :rejected inc)
                 (swap! counts gen/count-result result))
               result)))
+        result (if (and (not= :passed (:status result))
+                        (nil? (:replay result))
+                        (first @records))
+                 (assoc result :replay (replay-command (first @records)))
+                 result)
         summary (merge result {:counts @counts :records @records :versions @versions
                                :host (util/current-host) :proof-root (str proof-root)
                                :processes @(:used budget)
@@ -124,20 +162,7 @@
 
 (defn -main [& args]
   (try
-    (let [options
-          (loop [args args options {}]
-            (if (empty? args) options
-                (let [[flag value & more] args
-                      key (get {"--seed" :seed "--count" :case-count "--family" :family
-                                "--output" :output-directory
-                                "--replay" :replay-file "--max-processes" :max-processes
-                                "--max-ms" :max-ms "--shrink-attempts" :shrink-attempts
-                                "--shrink-ms" :shrink-ms} flag)]
-                  (when-not (and key value (not (contains? options key)))
-                    (throw (ex-info "Expected --seed N --count N or --replay FILE; optional --family NAME, --output DIR, --max-processes N, --max-ms N, --shrink-attempts N, --shrink-ms N"
-                                    {:kind :invalid-arguments})))
-                  (recur more (assoc options key (if (#{:family :output-directory :replay-file} key)
-                                                   value (parse-long value)))))))
+    (let [options (parse-options args)
           summary (run! options)]
       (prn summary)
       (shutdown-agents)

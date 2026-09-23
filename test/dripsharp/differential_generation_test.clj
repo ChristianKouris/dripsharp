@@ -1,6 +1,7 @@
 (ns dripsharp.differential-generation-test
   "Process-free generator/reducer checks; live execution is explicit and local."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [dripsharp.differential-campaign :as campaign]
             [dripsharp.differential-cases :as cases]
             [dripsharp.differential-generation :as gen]
@@ -175,6 +176,26 @@
   (is (thrown? clojure.lang.ExceptionInfo
                (gen/validate! (assoc-in sample [:limits :max-input-bytes] 5)))))
 
+(deftest campaign-cli-exposes-every-generation-and-execution-bound
+  (is (= {:seed 7
+          :case-count 3
+          :family "file"
+          :max-processes 20
+          :max-ms 120000
+          :shrink-attempts 4
+          :shrink-ms 1000
+          :generation-limits {:max-operations 8
+                              :max-value-units 12
+                              :max-input-bytes 4096}}
+         (campaign/parse-options
+          ["--seed" "7" "--count" "3" "--family" "file"
+           "--max-operations" "8" "--max-value-units" "12"
+           "--max-input-bytes" "4096" "--max-processes" "20"
+           "--max-ms" "120000" "--shrink-attempts" "4"
+           "--shrink-ms" "1000"])))
+  (is (thrown? clojure.lang.ExceptionInfo
+               (campaign/parse-options ["--max-operations"]))))
+
 (deftest accounting-distinguishes-outcomes
   (let [results [{:status :passed} (fault sample)
                  {:status :failed :first-difference {:kind :timeout}}
@@ -243,4 +264,8 @@
         (is (= 0 (get-in summary [:counts :executed])))
         (is (= 1 (get-in summary [:counts :harness-failed])))
         (is (= 42 (:seed (gen/read-record (first (:records summary))))))
+        (is (str/includes? (:replay summary) (first (:records summary))))
+        (is (str/includes? (:replay summary) "--max-processes 20 --max-ms 180000"))
+        (is (str/ends-with? (:replay summary)
+                            "--shrink-attempts 0 --shrink-ms 1000"))
         (is (= :java-compile (get-in summary [:first-difference :execution :phase])))))))

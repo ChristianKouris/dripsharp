@@ -8,6 +8,11 @@
 
 (def generator-identity {:id :java-compat-operations :version 3})
 (def default-limits {:max-operations 32 :max-value-units 32 :max-input-bytes 65536})
+(def generated-families
+  "Families with an explicit generator/domain model. Kept separate from the
+  larger fixed-case registry so registration never implies generation support."
+  ["byte-array-input" "byte-array-output" "byte-buffer" "file"
+   "filter-input" "filter-output" "long" "random-access" "string"])
 
 (defn- require! [condition message]
   (when-not condition (throw (ex-info message {:kind :invalid-generated-case}))))
@@ -258,13 +263,9 @@
   Native (family, case) runner state keys carry the explicit :handle identity."
   ([seed] (generate seed {}))
   ([seed options]
-   (let [families (or (:families options) ["byte-buffer" "byte-array-input" "filter-input"
-                                           "byte-array-output" "filter-output"
-                                           "random-access" "string" "long"])
+   (let [families (or (:families options) (vec (remove #{"file"} generated-families)))
          _ (require! (and (vector? families) (seq families)
-                          (every? #{"byte-buffer" "byte-array-input" "filter-input"
-                                    "byte-array-output" "filter-output" "random-access"
-                                    "string" "long" "file"} families))
+                          (every? (set generated-families) families))
                      "Invalid generated family selection")
          limits (limits! (merge default-limits (dissoc options :families)))
          rng (Random. (long seed))

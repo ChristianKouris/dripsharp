@@ -1,6 +1,7 @@
 (ns dripsharp.main-test
   (:require [clojure.test :refer [deftest is]]
             [dripsharp.authorship-portfolio :as authorship-portfolio]
+            [dripsharp.differential-registry :as differential-registry]
             [dripsharp.java-compat-differential :as java-compat-differential]
             [dripsharp.main :as main]
             [dripsharp.paths :as paths]
@@ -46,6 +47,10 @@
                   (fn []
                     (swap! calls conj [:java-compat-differential])
                     :ok)
+                  differential-registry/print-registry!
+                  (fn [family]
+                    (swap! calls conj [:differential-families family])
+                    :ok)
                   pdfcube-host-matrix/verify!
                   (fn [evidence-root output-root]
                     (swap! calls conj
@@ -75,6 +80,10 @@
       (is (= :ok
              (main/dispatch! ["java-compat-differential"])))
       (is (= :ok
+             (main/dispatch! ["differential-families"])))
+      (is (= :ok
+             (main/dispatch! ["differential-families" "file"])))
+      (is (= :ok
              (main/dispatch!
               ["pdfcube-family-host-matrix" "evidence" "output"])))
       (is (= :ok
@@ -90,6 +99,8 @@
                 :commit-message "Publish Acme"}]
               [:authorship-report {:selection "all"}]
               [:java-compat-differential]
+              [:differential-families nil]
+              [:differential-families "file"]
               [:pdfcube-family-host-matrix "evidence" "output"]
               [:rebaseline
                (paths/workspace-root)
@@ -110,6 +121,7 @@
                 ["authorship-report"]
                 ["authorship-report" "all" "extra"]
                 ["java-compat-differential" "pkl"]
+                ["differential-families" "file" "extra"]
                 ["pdfcube-family-host-matrix"]
                 ["pdfcube-family-host-matrix" "evidence"]
                 ["pdfcube-family-host-matrix"
