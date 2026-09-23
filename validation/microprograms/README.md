@@ -68,11 +68,21 @@ result rather than an externally retained object. Within a method, mutations
 and method calls are translated normally: the collection example adds and
 replaces entries and calls a helper before returning a selected value.
 
-The observer categorizes only the relevant arithmetic, index-bounds, and null
-reference exceptions. It unwraps invocation exceptions, records the category at
-the failing operation, and continues with the next input. Unexpected exceptions,
+The observer categorizes the relevant arithmetic, index-bounds, null-reference,
+and illegal-argument exceptions. It unwraps invocation exceptions, records the
+category at the failing operation, and continues with the next input. Unexpected exceptions,
 missing methods, unsupported result types, crashes, and observer failures are
 process failures. Exception messages are diagnostic text, not comparison values.
+
+A batch may also name an optional `:dotnet-consumer` C# source containing
+`NativeConsumer.Run(string inputFile)`. It compiles in the native observer
+project against the same generated library. After successful JVM/translated
+comparison, a separate process invokes it with the same saved input file.
+Consumer assertions verify a .NET adaptation contract independently; a failed
+consumer fails the batch at `:native-consumer`. Its source is part of the replay
+snapshot. The [JavaFile batch](java-file/README.md) uses this for public
+`FileInfo` signatures, rejection of unrepresentable exports, external dispatch,
+and mutable collection aliasing.
 
 ## Evidence and replay
 

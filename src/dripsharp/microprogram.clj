@@ -48,6 +48,7 @@
                  (every? relative-source? (keys (:sources snapshot)))
                  (every? string? (vals (:sources snapshot)))
                  (every? string? (map snapshot [:input :java-observer :dotnet-observer]))
+                 (or (nil? (:dotnet-consumer snapshot)) (string? (:dotnet-consumer snapshot)))
                  (<= (count (.getBytes (pr-str snapshot) "UTF-8")) (* 4 max-bytes))
                  (pos-int? (:java-release snapshot))
                  (map? (:operations snapshot))
@@ -78,7 +79,7 @@
     (doseq [row rows]
       (let [entry (get-in snapshot [:operations (:operation row)])]
         (when-not (and entry
-                       (contains? #{"none" "arithmetic" "index-out-of-bounds" "null-pointer"}
+                       (contains? #{"none" "arithmetic" "index-out-of-bounds" "null-pointer" "illegal-argument"}
                                   (:expected-exception row))
                        (= (count (:parameters entry)) (count (:arguments row)))
                        (every? true? (map typed-argument? (:parameters entry) (:arguments row))))
@@ -103,13 +104,15 @@
                    (every? relative-source? (:sources batch))
                    (= (count (:sources batch)) (count (distinct (:sources batch)))))
       (reject! "Batch requires 1–32 distinct Java source paths" {}))
-    (assoc batch
-           :sources (into (sorted-map) (map (fn [path] [path (read-text path)]) (:sources batch)))
-           :configuration (util/read-single-edn-string! (read-text (:configuration batch)))
-           :input (read-text (:input batch))
-           :java-observer (read-text (:java-observer batch))
-           :dotnet-observer (read-text (:dotnet-observer batch))
-           :java-release (:java-release (read-edn (paths/resolve-path root "validation/java-compat/contract.edn"))))))
+    (merge batch
+           {:sources (into (sorted-map) (map (fn [path] [path (read-text path)]) (:sources batch)))
+            :configuration (util/read-single-edn-string! (read-text (:configuration batch)))
+            :input (read-text (:input batch))
+            :java-observer (read-text (:java-observer batch))
+            :dotnet-observer (read-text (:dotnet-observer batch))
+            :java-release (:java-release (read-edn (paths/resolve-path root "validation/java-compat/contract.edn")))}
+           (when (:dotnet-consumer batch)
+             {:dotnet-consumer (read-text (:dotnet-consumer batch))}))))
 
 (defn- write-edn! [file value]
   (util/write-text! file (str (pr-str value) "\n")))
@@ -232,6 +235,8 @@
                  _ (util/write-text! (file "input.tsv") (:input snapshot))
                  _ (util/write-text! (file "observer/MicroObserver.java") (:java-observer snapshot))
                  _ (util/write-text! (file "observer/Program.cs") (:dotnet-observer snapshot))
+                 _ (when-let [consumer (:dotnet-consumer snapshot)]
+                     (util/write-text! (file "observer/NativeConsumer.cs") consumer))
                  _ (util/write-text! (file "observer/Observer.csproj") observer-project)
                  _ (write-edn! (file "destination.edn") (:configuration snapshot))
                  bindings (into {} (map (fn [side] [side (write-bindings! directory snapshot side)]) [:java :dotnet]))
@@ -278,8 +283,13 @@
                  _ (reset! phase :comparison)
                  outcome (cases/compare-executions
                           rows {:status :ok :observations (slurp (str (file "java.tsv")))}
-                          {:status :ok :observations (slurp (str (file "dotnet.tsv")))})]
-             (merge {:batch (:id snapshot) :generator (:generator snapshot) :operations (count rows)} outcome))
+                          {:status :ok :observations (slurp (str (file "dotnet.tsv")))})
+                 native (when (and (:dotnet-consumer snapshot) (= :passed (:status outcome)))
+                          {:status :passed
+                           :output (command! :native-consumer 30000
+                                             (into dotnet-command ["--native-consumer" (file "input.tsv")]))})]
+             (cond-> (merge {:batch (:id snapshot) :generator (:generator snapshot) :operations (count rows)} outcome)
+               native (assoc :native-consumer native)))
            (catch Exception error
              {:status (if (and (= :admission @phase) (= :candidate-rejected (:kind (ex-data error))))
                         :rejected :failed)

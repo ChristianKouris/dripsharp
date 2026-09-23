@@ -47,11 +47,19 @@ internal static class Program
         IndexOutOfRangeException => "index-out-of-bounds",
         ArgumentOutOfRangeException => "index-out-of-bounds",
         NullReferenceException => "null-pointer",
+        ArgumentException => "illegal-argument",
         _ => throw error
     };
 
     public static void Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--native-consumer")
+        {
+            typeof(Program).Assembly.GetType("NativeConsumer", true)!
+                .GetMethod("Run", BindingFlags.Public | BindingFlags.Static)!
+                .Invoke(null, new object[] { args[1] });
+            return;
+        }
         if (args.Length == 1 && args[0] == "--runtime-version")
         {
             Console.WriteLine(RuntimeInformation.FrameworkDescription);

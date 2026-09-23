@@ -1,0 +1,69 @@
+{:schema-version 1
+ :id "java-file-boundaries"
+ :generator {:id :java-file-templates :version 1 :seed nil}
+ :sources ["subjects/micro/FileSource.java" "subjects/micro/FileBox.java"
+           "subjects/micro/InheritedFileBox.java" "subjects/micro/DerivedFileBox.java"
+           "subjects/micro/FileFlows.java"]
+ :configuration "../destination.edn"
+ :input "cases.tsv"
+ :java-observer "../MicroObserver.java"
+ :dotnet-observer "../Program.cs"
+ :dotnet-consumer "NativeConsumer.cs"
+ :operations
+ {"construct" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "string-parent" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "file-parent" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "field-return" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "public-echo" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "inherited-return" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "inherited-echo" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "interface" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "override-super" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "protected-super" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "array-alias" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "list-alias" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "lambda" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "bound-reference" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "unbound-reference" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "generic" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "protected" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "delegate" {:java-type "micro.FileFlows" :java-method "flow"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Flow"
+   :parameters ["string" "int"]}
+  "queries" {:java-type "micro.FileFlows" :java-method "queries"
+   :dotnet-type "DripSharp.Microprograms.FileFlows" :dotnet-method "Queries"
+   :parameters ["string"]}}}

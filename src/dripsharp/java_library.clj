@@ -6331,6 +6331,16 @@
      [(raw (str "global::DripSharp.Runtime.JavaFileBridge." direction "<"))
       (type-node ctx reference) (raw ">(") node (raw ")")])) )
 
+(defn- java-file-argument-nodes [ctx parameter-types arguments]
+  ;; Reflection arguments are object[], so inline lambdas/method references
+  ;; no longer have a target delegate type. Retain each internal Java type;
+  ;; casting to the public FileInfo delegate here would cross the boundary.
+  (mapv (fn [index argument]
+          (if-let [reference (nth parameter-types index nil)]
+            (csharp/cast (type-node ctx reference) (csharp/parenthesized argument))
+            argument))
+        (range) arguments))
+
 (defn- java-file-invocation [ctx declaration target-node arguments super? parameter-types result-type]
   (when (java-file-public-executable? ctx declaration)
     (let [^CtMethod method declaration
@@ -6354,7 +6364,7 @@
         (sequence-node
          (mapv #(sequence-node [(raw "typeof(") (type-node api-ctx %) (raw ")")])
                parameter-types) ", ")
-        (raw " }, new object[] { ") (sequence-node arguments ", ") (raw " })")])))))
+        (raw " }, new object[] { ") (sequence-node (java-file-argument-nodes ctx parameter-types arguments) ", ") (raw " })")])))))
 
 (defn- external-java-file-invocation [ctx element target-node method-node arguments]
   (let [reference (.getExecutable ^CtInvocation element)
@@ -6376,7 +6386,7 @@
          (mapv #(sequence-node [(raw "typeof(")
                                (type-node (assoc ctx :java-file-api? true) %)
                                (raw ")")]) parameters) ", ")
-        (raw " }, new object[] { ") (sequence-node arguments ", ") (raw " })")]))))
+        (raw " }, new object[] { ") (sequence-node (java-file-argument-nodes ctx parameters arguments) ", ") (raw " })")]))))
 
 (defn- body-rules [ctx-holder]
   (let [shared-mappings (shared-mapping-registry ctx-holder)]

@@ -24,6 +24,7 @@
     (= "javac" (first command)) :java-compile
     (= "clojure" (first command)) :translation
     (= "build" (second command)) :dotnet-build
+    (some #{"--native-consumer"} command) :native-consumer
     (= "--runtime-version" (last command)) (if (= "java" (first command)) :java-runtime :dotnet-runtime)
     (= "java" (first command)) :java
     :else :dotnet))
@@ -139,3 +140,25 @@
     (is (= :failed (:status result)))
     (is (= :semantic-difference (get-in result [:first-difference :kind])))
     (is (= "zero" (get-in result [:first-difference :identity :case])))))
+
+(deftest native-consumer-shares-the-build-and-cannot-fail-silently
+  (let [source "public static class NativeConsumer { public static void Run(string input) {} }"
+        change #(assoc % :dotnet-consumer source)
+        {:keys [result calls]} (run-fake {:snapshot-change change})
+        native (filter #(= :native-consumer (:phase %)) calls)]
+    (is (= :passed (:status result)))
+    (is (= :passed (get-in result [:native-consumer :status])))
+    (is (= source (:dotnet-consumer (read-edn (:snapshot result)))))
+    (is (= source (slurp (str (paths/resolve-path (:directory result) "observer/NativeConsumer.cs")))))
+    (is (= 1 (count native)))
+    (is (= 1 (count (filter #(= :dotnet-build (:phase %)) calls))))
+    (is (= (str (paths/resolve-path (:directory result) "input.tsv")) (last (:command (first native)))))
+    (let [{failed :result} (run-fake {:snapshot-change change
+                                    :failure {:phase :native-consumer :kind :command-failed}})]
+      (is (= :failed (:status failed)))
+      (is (= :native-consumer (:phase failed)))
+      (is (zero? (:matched failed))))
+    (let [{failed :result calls :calls} (run-fake {:snapshot-change change
+                                                 :failure {:phase :mismatch}})]
+      (is (= :semantic-difference (get-in failed [:first-difference :kind])))
+      (is (not-any? #(= :native-consumer (:phase %)) calls)))))
