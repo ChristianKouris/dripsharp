@@ -4,6 +4,7 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.differential :as differential]
+            [dripsharp.differential-cases :as cases]
             [dripsharp.harness :as harness]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
@@ -401,3 +402,170 @@
                              [:schema-version :header
                               :observations :families]))))
        (assoc summary :proof-root proof-root)))))
+
+(def case-families
+  "Local-only concrete operation contracts. Registration launches no processes."
+  {"byte-buffer" {"wrap" {:arguments [#{"b" "n"}]
+                          :exceptions #{"none" "null-pointer"}}
+                  "get" {:arguments []
+                         :exceptions #{"none" "null-pointer" "buffer-underflow"}}
+                  "get-int" {:arguments []
+                             :exceptions #{"none" "null-pointer" "buffer-underflow"}}}
+   "string" {"hash" {:arguments [#{"u" "n"}]
+                     :exceptions #{"none" "null-pointer"}}}
+   "long" {"hash" {:arguments [#{"i"}] :exceptions #{"none"}}}})
+
+(defn select-cases
+  "Validates all input operations before selecting complete cases. Unknown
+  families/operations and out-of-domain integers are input errors, never skips."
+  [text {:keys [family case-id]}]
+  (let [rows (cases/read-cases text)]
+    (when (> (count rows) 10000)
+      (throw (ex-info "Case batch exceeds 10000 operations" {:kind :invalid-case})))
+    (doseq [{:keys [family operation arguments expected-exception] :as row} rows]
+      (let [spec (get-in case-families [family operation])]
+        (when-not (and spec (= (count arguments) (count (:arguments spec)))
+                       (every? true? (map (fn [types value]
+                                            (contains? types (subs value 0 1)))
+                                          (:arguments spec) arguments))
+                       (contains? (:exceptions spec) expected-exception)
+                       (or (not= family "long")
+                           (<= Long/MIN_VALUE (bigint (subs (first arguments) 2))
+                               Long/MAX_VALUE)))
+          (throw (ex-info "Unknown operation or invalid operation contract"
+                          {:kind :invalid-case :row row})))))
+    (let [selected (filterv #(and (or (nil? family) (= family (:family %)))
+                                  (or (nil? case-id) (= case-id (:case %)))) rows)]
+      (when (empty? selected)
+        (throw (ex-info "No cases match selection" {:kind :invalid-case
+                                                    :family family :case case-id})))
+      selected)))
+
+(defn- case-command! [run-command! phase command]
+  (let [execution (cases/process-outcome run-command! phase command)]
+    (when-not (= :ok (:status execution))
+      (throw (ex-info "Concrete-case process failed"
+                      {:kind :case-process-failure :execution execution})))
+    (get-in execution [:process :output])))
+
+(defn- shell-quote [value]
+  (str "'" (str/replace (str value) "'" "'\"'\"'") "'"))
+
+(defn verify-cases!
+  "Explicit local entry point. Compiles each fixed runner once for the entire
+  selected batch; both runners then consume the same saved input file.
+  Returns and saves non-success evidence for build/start/exit/timeout failures."
+  ([] (verify-cases! {}))
+  ([{:keys [workspace-root input-file output-directory run-command!]
+     :or {input-file "validation/java-compat/cases.tsv"
+          output-directory "validation-output/java-compat-cases"
+          run-command! process/run!}
+     :as options}]
+   (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
+         contract (read-contract root)
+         source (configured-path root input-file)
+         _ (when (> (Files/size source) (* 1024 1024))
+             (throw (ex-info "Case input exceeds 1 MiB" {:kind :invalid-case})))
+         rows (select-cases (slurp (str source)) options)
+         parent (configured-path root output-directory)
+         _ (Files/createDirectories parent (make-array FileAttribute 0))
+         proof-root (Files/createTempDirectory parent "run-" (make-array FileAttribute 0))
+         input (paths/resolve-path proof-root "input.tsv")
+         oracle-output (paths/resolve-path proof-root "java.tsv")
+         probe-output (paths/resolve-path proof-root "dotnet.tsv")
+         versions (atom {})
+         evidence {:input (str input)
+                   :input-kind :recorded
+                   :operations (count rows)
+                   :cases (count (set (map (juxt :family :case) rows)))
+                   :families (vec (sort (set (map :family rows))))
+                   :type-availability :not-run
+                   :host (util/current-host)
+                   :replay (str "DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M -m dripsharp.java-compat-differential --cases "
+                                (shell-quote input))}
+         _ (util/write-text! input (cases/write-cases rows))
+         result
+         (try
+           (let [{:keys [java javac home]} (java-tools contract)
+                 project (configured-path root (get-in contract [:probe :project]))
+                 framework (second (re-find #"<TargetFramework>([^<]+)</TargetFramework>"
+                                            (slurp (str project))))
+                 _ (when-not (= "net10.0" framework)
+                     (throw (ex-info "Concrete probe must target configured net10.0 contract"
+                                     {:kind :runtime-contract :framework framework})))
+                 command! (fn [phase timeout command]
+                            (case-command! run-command! phase
+                                           {:directory root :timeout-ms timeout
+                                            :command (mapv str command)}))
+                 classes (paths/resolve-path proof-root "classes")
+                 binaries (paths/resolve-path proof-root "dotnet")
+                 _ (Files/createDirectories classes (make-array FileAttribute 0))
+                 _ (swap! versions assoc :java-contract (:java-release contract)
+                          :java-home (str home) :dotnet-contract framework)
+                 _ (swap! versions assoc :javac
+                          (str/trim (process/without-java-tool-options-banner
+                                     (command! :java-version 10000 [javac "-version"])))
+                          :dotnet-sdk
+                          (str/trim (command! :dotnet-version 10000 ["dotnet" "--version"])))
+                 _ (command! :java-compile (get-in contract [:oracle :compile-timeout-ms])
+                             [javac "--release" (:java-release contract) "-encoding" "UTF-8"
+                              "-d" classes (configured-path root (get-in contract [:oracle :source]))])
+                 _ (command! :dotnet-build (get-in contract [:probe :build-timeout-ms])
+                             ["dotnet" "build" project "--nologo" "--configuration" "Release"
+                              "--verbosity:minimal" "-warnaserror" "--output" binaries])
+                 java-command [java "-cp" classes (get-in contract [:oracle :main-class])]
+                 dotnet-command ["dotnet" "--roll-forward" "LatestPatch"
+                                 (paths/resolve-path binaries "DripSharp.JavaCompat.DirectProbe.dll")]
+                 java-version (str/trim (process/without-java-tool-options-banner
+                                         (command! :java-runtime 10000
+                                                   (conj java-command "--runtime-version"))))
+                 dotnet-version (str/trim (command! :dotnet-runtime 10000
+                                                    (conj dotnet-command "--runtime-version")))
+                 _ (swap! versions assoc :java-runtime java-version :dotnet-runtime dotnet-version)
+                 _ (when-not (and (str/starts-with? java-version (str (:java-release contract) "."))
+                                  (str/starts-with? dotnet-version ".NET 10."))
+                     (throw (ex-info "Executed runtime differs from configured contract"
+                                     {:kind :runtime-contract :versions @versions})))
+                 execute (fn [side command output timeout]
+                           (let [execution (cases/process-outcome
+                                            run-command! side
+                                            {:directory root :timeout-ms timeout
+                                             :command (mapv str (into command ["--cases" input output]))})]
+                             (assoc execution :observations
+                                    (if (paths/regular-file? output) (slurp (str output)) ""))))
+                 oracle (execute :oracle java-command oracle-output
+                                 (get-in contract [:oracle :run-timeout-ms]))
+                 probe (execute :probe dotnet-command probe-output
+                                (get-in contract [:probe :run-timeout-ms]))]
+             (assoc (cases/compare-executions rows oracle probe)
+                    :executions {:oracle (dissoc oracle :observations)
+                                 :probe (dissoc probe :observations)}))
+           (catch clojure.lang.ExceptionInfo error
+             {:status :failed :first-difference (ex-data error)}))
+         summary (merge evidence result {:versions @versions})]
+     (util/write-text! (paths/resolve-path proof-root "summary.edn")
+                       (str (pr-str summary) "\n"))
+     summary)))
+
+(defn -main [& arguments]
+  (try
+    (let [options
+          (loop [remaining arguments options {}]
+            (if (empty? remaining)
+              options
+              (let [[flag value & more] remaining
+                    key (get {"--cases" :input-file "--family" :family
+                              "--case" :case-id "--output" :output-directory} flag)]
+                (when-not (and key value (not (contains? options key)))
+                  (throw (ex-info
+                          "Usage: --cases FILE [--family NAME] [--case ID] [--output DIRECTORY]"
+                          {:kind :invalid-arguments})))
+                (recur more (assoc options key value)))))
+          summary (verify-cases! options)]
+      (prn summary)
+      (shutdown-agents)
+      (System/exit (if (= :passed (:status summary)) 0 1)))
+    (catch Exception error
+      (prn {:status :failed :message (.getMessage error) :error (ex-data error)})
+      (shutdown-agents)
+      (System/exit 2))))

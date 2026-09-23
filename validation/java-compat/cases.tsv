@@ -1,0 +1,18 @@
+DRIPSHARP_DIFFERENTIAL_CASES_V1
+byte-buffer	signed	0	wrap	none	b:80010203ff
+byte-buffer	signed	1	get-int	none
+byte-buffer	signed	2	get	none
+byte-buffer	signed	3	get	buffer-underflow
+byte-buffer	signed	4	get-int	buffer-underflow
+byte-buffer	short	0	wrap	none	b:abcd
+byte-buffer	short	1	get-int	buffer-underflow
+byte-buffer	short	2	get	none
+byte-buffer	empty	0	wrap	none	b:
+byte-buffer	empty	1	get	buffer-underflow
+byte-buffer	null	0	wrap	null-pointer	n:
+string	empty	0	hash	none	u:
+string	null	0	hash	null-pointer	n:
+string	code-units	0	hash	none	u:00000009d8000061dc00ffff
+long	maximum	0	hash	none	i:9223372036854775807
+long	minimum	0	hash	none	i:-9223372036854775808
+long	beyond-double	0	hash	none	i:9007199254740993

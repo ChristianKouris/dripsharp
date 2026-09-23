@@ -54,7 +54,88 @@ public final class JavaCompatOracle {
 
   private record Observation(String family, String id, String value) {}
 
+  // Inputs are ASCII typed tokens, never JSON numbers or Unicode scalars.
+  private static Object caseValue(String token) {
+    if (token.equals("n:")) return null;
+    if (token.matches("b:(?:[0-9a-f]{2})*"))
+      return HexFormat.of().parseHex(token.substring(2));
+    if (token.matches("i:(?:0|-?[1-9][0-9]*)"))
+      return new java.math.BigInteger(token.substring(2));
+    if (token.matches("u:(?:[0-9a-f]{4})*")) {
+      var value = new StringBuilder();
+      for (int i = 2; i < token.length(); i += 4)
+        value.append((char)Integer.parseInt(token.substring(i, i + 4), 16));
+      return value.toString();
+    }
+    throw new IllegalArgumentException("Invalid case value: " + token);
+  }
+
+  private static void runCases(Path input, Path output) throws Exception {
+    var lines = Files.readAllLines(input, StandardCharsets.UTF_8);
+    if (lines.size() < 2 || !lines.get(0).equals("DRIPSHARP_DIFFERENTIAL_CASES_V1"))
+      throw new IllegalArgumentException("Invalid cases header or empty input");
+    var results = new ArrayList<String>();
+    results.add("DRIPSHARP_DIFFERENTIAL_CASE_RESULTS_V1");
+    var buffers = new java.util.HashMap<String, ByteBuffer>();
+    var identities = new java.util.HashSet<String>();
+    for (var line : lines.subList(1, lines.size())) {
+      var fields = line.split("\t", -1);
+      if (fields.length < 5) throw new IllegalArgumentException("Malformed case");
+      for (int i = 0; i < 5; i++)
+        if (!fields[i].matches("[A-Za-z0-9_.-]+"))
+          throw new IllegalArgumentException("Invalid case identity");
+      var key = fields[0] + "\t" + fields[1];
+      if (!identities.add(key + "\t" + fields[2]))
+        throw new IllegalArgumentException("Duplicate case step");
+      var operation = fields[0] + "/" + fields[3];
+      int arity = switch (operation) {
+        case "byte-buffer/wrap", "string/hash", "long/hash" -> 1;
+        case "byte-buffer/get", "byte-buffer/get-int" -> 0;
+        default -> throw new IllegalArgumentException("Unknown operation: " + operation);
+      };
+      if (fields.length != 5 + arity)
+        throw new IllegalArgumentException("Wrong argument count");
+      Object value = arity == 0 ? null : caseValue(fields[5]);
+      // Domain validation occurs outside the observed operation's exception boundary.
+      if (operation.equals("byte-buffer/wrap") && value != null && !(value instanceof byte[])
+          || operation.equals("string/hash") && value != null && !(value instanceof String)
+          || operation.equals("long/hash") && !(value instanceof java.math.BigInteger))
+        throw new IllegalArgumentException("Wrong argument type");
+      long number = operation.equals("long/hash")
+          ? ((java.math.BigInteger)value).longValueExact() : 0;
+      var result = "n:";
+      var exception = "none";
+      try {
+        switch (operation) {
+          case "byte-buffer/wrap" -> buffers.put(key, ByteBuffer.wrap((byte[])value));
+          case "byte-buffer/get" -> result = "i:" + buffers.get(key).get();
+          case "byte-buffer/get-int" -> result = "i:" + buffers.get(key).getInt();
+          case "string/hash" -> result = "i:" + ((String)value).hashCode();
+          case "long/hash" -> result = "i:" + Long.hashCode(number);
+          default -> throw new AssertionError(operation);
+        }
+      } catch (NullPointerException error) {
+        exception = "null-pointer";
+      } catch (java.nio.BufferUnderflowException error) {
+        exception = "buffer-underflow";
+      }
+      var buffer = buffers.get(key);
+      var state = buffer == null ? "n:" : "i:" + buffer.position();
+      results.add(String.join("\t", fields[0], fields[1], fields[2], fields[3],
+          exception, result, state));
+    }
+    Files.writeString(output, String.join("\n", results) + "\n", StandardCharsets.UTF_8);
+  }
+
   public static void main(String[] arguments) throws Exception {
+    if (arguments.length == 1 && arguments[0].equals("--runtime-version")) {
+      System.out.println(System.getProperty("java.runtime.version"));
+      return;
+    }
+    if (arguments.length == 3 && arguments[0].equals("--cases")) {
+      runCases(Path.of(arguments[1]), Path.of(arguments[2]));
+      return;
+    }
     if (arguments.length != 2) {
       throw new IllegalArgumentException(
           "Usage: JavaCompatOracle <output.tsv> <TypeProvenance.tsv>");

@@ -33,6 +33,16 @@ internal static class Program
     {
         try
         {
+            if (arguments is ["--runtime-version"])
+            {
+                Console.WriteLine(System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription);
+                return 0;
+            }
+            if (arguments is ["--cases", var inputFile, var resultFile])
+            {
+                RunCases(inputFile, resultFile);
+                return 0;
+            }
             if (arguments is ["--list-types"])
             {
                 foreach (var type in RuntimeTypes().OrderBy(
@@ -64,6 +74,92 @@ internal static class Program
         {
             Console.Error.WriteLine(error);
             return 1;
+        }
+    }
+
+    private static object? CaseValue(string token)
+    {
+        if (token == "n:") return null;
+        if (System.Text.RegularExpressions.Regex.IsMatch(token, @"\Ab:(?:[0-9a-f]{2})*\z"))
+            return Convert.FromHexString(token[2..]).Select(b => unchecked((sbyte)b)).ToArray();
+        if (System.Text.RegularExpressions.Regex.IsMatch(token, @"\Ai:(?:0|-?[1-9][0-9]*)\z"))
+            return System.Numerics.BigInteger.Parse(token[2..], CultureInfo.InvariantCulture);
+        if (System.Text.RegularExpressions.Regex.IsMatch(token, @"\Au:(?:[0-9a-f]{4})*\z"))
+        {
+            var value = new StringBuilder();
+            for (var i = 2; i < token.Length; i += 4)
+                value.Append((char)ushort.Parse(token.Substring(i, 4), NumberStyles.HexNumber,
+                    CultureInfo.InvariantCulture));
+            return value.ToString();
+        }
+        throw new InvalidDataException("Invalid case value: " + token);
+    }
+
+    private static void RunCases(string input, string output)
+    {
+        var lines = File.ReadAllLines(input, Encoding.UTF8);
+        if (lines.Length < 2 || lines[0] != "DRIPSHARP_DIFFERENTIAL_CASES_V1")
+            throw new InvalidDataException("Invalid cases header or empty input");
+        var results = new List<string> { "DRIPSHARP_DIFFERENTIAL_CASE_RESULTS_V1" };
+        var buffers = new Dictionary<string, JavaByteBuffer>();
+        var identities = new HashSet<string>();
+        try
+        {
+            foreach (var line in lines.Skip(1))
+            {
+                var fields = line.Split('\t');
+                if (fields.Length < 5) throw new InvalidDataException("Malformed case");
+                if (fields.Take(5).Any(field => !System.Text.RegularExpressions.Regex.IsMatch(
+                        field, @"\A[A-Za-z0-9_.-]+\z")))
+                    throw new InvalidDataException("Invalid case identity");
+                var key = fields[0] + "\t" + fields[1];
+                if (!identities.Add(key + "\t" + fields[2]))
+                    throw new InvalidDataException("Duplicate case step");
+                var operation = fields[0] + "/" + fields[3];
+                var arity = operation switch
+                {
+                    "byte-buffer/wrap" or "string/hash" or "long/hash" => 1,
+                    "byte-buffer/get" or "byte-buffer/get-int" => 0,
+                    _ => throw new InvalidDataException("Unknown operation: " + operation)
+                };
+                if (fields.Length != 5 + arity)
+                    throw new InvalidDataException("Wrong argument count");
+                var value = arity == 0 ? null : CaseValue(fields[5]);
+                if (operation == "byte-buffer/wrap" && value is not null and not sbyte[] ||
+                    operation == "string/hash" && value is not null and not string ||
+                    operation == "long/hash" && value is not System.Numerics.BigInteger)
+                    throw new InvalidDataException("Wrong argument type");
+                var number = operation == "long/hash" ? (long)(System.Numerics.BigInteger)value! : 0;
+                var result = "n:";
+                var exception = "none";
+                buffers.TryGetValue(key, out var buffer);
+                try
+                {
+                    switch (operation)
+                    {
+                        case "byte-buffer/wrap":
+                            var replacement = JavaByteBuffer.wrap((sbyte[])value!);
+                            buffer?.Dispose();
+                            buffers[key] = buffer = replacement;
+                            break;
+                        case "byte-buffer/get": result = "i:" + buffer!.get().ToString(CultureInfo.InvariantCulture); break;
+                        case "byte-buffer/get-int": result = "i:" + buffer!.getInt().ToString(CultureInfo.InvariantCulture); break;
+                        case "string/hash": result = "i:" + JavaCompat.StringHashCode((string)value!).ToString(CultureInfo.InvariantCulture); break;
+                        case "long/hash": result = "i:" + JavaCompat.LongHashCode(number).ToString(CultureInfo.InvariantCulture); break;
+                    }
+                }
+                catch (ArgumentNullException) { exception = "null-pointer"; }
+                catch (NullReferenceException) { exception = "null-pointer"; }
+                catch (EndOfStreamException) { exception = "buffer-underflow"; }
+                var state = buffer is null ? "n:" : "i:" + buffer.position().ToString(CultureInfo.InvariantCulture);
+                results.Add(string.Join("\t", fields[0], fields[1], fields[2], fields[3],
+                    exception, result, state));
+            }
+            File.WriteAllText(output, string.Join("\n", results) + "\n", new UTF8Encoding(false));
+        }
+        finally
+        {
+            foreach (var buffer in buffers.Values) buffer.Dispose();
         }
     }
 
