@@ -101,6 +101,16 @@
 (def required-trace-families
   (set/union required-execution-families required-validation-families))
 
+(def metadata-workflow-generator
+  {:version 1
+   :seed 1592599560
+   :generated-cases 3
+   :case-ids
+   ["baseline-valid" "constructed-properties" "utf16-encoding"
+    "namespace-remap" "date-minimum" "number-maximum"
+    "missing-optional" "missing-required" "invalid-control"
+    "generated-000" "generated-001" "generated-002"]})
+
 (defn- fail! [message data]
   (throw
    (ex-info
@@ -291,9 +301,12 @@
              vec)
         resource-roots
         (mapv #(configured-path root %) (:resource-roots project-input))
-        oracle-source
+        oracle-sources
         (paths/resolve-path
          root "validation" "pdfcube-preflight" "PreflightExecutionOracle.java")
+        metadata-workflow-source
+        (paths/resolve-path
+         root "validation" "pdfcube-preflight" "MetadataWorkflowOracle.java")
         classes
         (doto (paths/resolve-path proof-root "oracle-classes")
           (Files/createDirectories (make-array FileAttribute 0)))
@@ -308,7 +321,7 @@
           (seq dependencies) (into ["-classpath" compile-classpath])
           true (into ["-d" (str classes)])
           true (into (map str sources))
-          true (conj (str oracle-source)))]
+          true (into (map str [oracle-sources metadata-workflow-source])))]
     (doseq [tool [java javac]]
       (when-not (paths/regular-file? tool)
         (fail! "Pinned Java oracle toolchain is missing"
@@ -320,7 +333,9 @@
                              "PreflightExecutionOracle"
                              (str output) (str fixtures) (str root)]
                    :directory root
-                   :timeout-ms 300000})))
+                   :timeout-ms 300000})
+    {:java java
+     :classpath run-classpath}))
 
 (defn- run-package-probe!
   [run-command! ^Path root package-proof ^Path output ^Path fixtures]
@@ -344,7 +359,115 @@
                              "--no-build" "--no-restore" "--"
                              (str output) (str fixtures) (str root)]
                    :directory consumer-root
-                   :timeout-ms 300000})))
+                   :timeout-ms 300000})
+    {:consumer-root consumer-root
+     :project project}))
+
+(defn metadata-workflow-trace-summary
+  "Validates the bounded cross-runtime metadata workflow trace."
+  [trace]
+  (let [trace (paths/path trace)
+        rows
+        (mapv
+         (fn [index line]
+           (let [fields (str/split line #"\t" -1)]
+             (when-not (and (= 3 (count fields))
+                            (= "metadata-workflow" (first fields))
+                            (every? (complement str/blank?) fields))
+               (fail! "Metadata workflow trace contains a malformed observation"
+                      {:trace (str trace) :line (inc index) :value line}))
+             (zipmap [:family :id :value] fields)))
+         (range)
+         (Files/readAllLines trace StandardCharsets/UTF_8))
+        expected-identities
+        (vec
+         (for [producer ["java" "dotnet"]
+               case-id (:case-ids metadata-workflow-generator)]
+           ["metadata-workflow" (str producer "/" case-id)]))
+        actual-identities (mapv (juxt :family :id) rows)]
+    (when-not (= expected-identities actual-identities)
+      (fail! "Metadata workflow trace coverage or ordering drifted"
+             {:trace (str trace)
+              :expected expected-identities
+              :actual actual-identities}))
+    {:observations (count rows)
+     :producers ["java" "dotnet"]
+     :cases (count (:case-ids metadata-workflow-generator))
+     :identities actual-identities}))
+
+(defn- run-metadata-workflow!
+  [run-command! ^Path root ^Path proof-root java-context package-context]
+  (let [workflow-root
+        (doto (paths/resolve-path proof-root "metadata-workflow")
+          (Files/createDirectories (make-array FileAttribute 0)))
+        qualified-fixture
+        (paths/resolve-path
+         root "research" "pdfbox" "preflight" "src" "test" "resources"
+         "org" "apache" "pdfbox" "preflight" "metadata"
+         "PDFAMetaDataValidationTestTrailingNul.pdf")
+        java-trace (paths/resolve-path workflow-root "upstream-java.tsv")
+        dotnet-trace (paths/resolve-path workflow-root "package-dotnet.tsv")
+        java-command
+        (fn [mode output]
+          [(str (:java java-context))
+           "-Duser.language=en" "-Duser.country=US" "-Duser.timezone=UTC"
+           "-classpath" (:classpath java-context)
+           "MetadataWorkflowOracle" mode (str workflow-root)
+           (str qualified-fixture) (str output)])
+        consumer-root (:consumer-root package-context)
+        project (:project package-context)
+        source (paths/resolve-path consumer-root "Program.cs")
+        probe
+        (paths/resolve-path
+         root "validation" "pdfcube-preflight" "MetadataWorkflowProbe.cs")
+        dotnet-command
+        (fn [mode output]
+          ["dotnet" "run" "--project" (str project)
+           "--no-build" "--no-restore" "--"
+           mode (str workflow-root) (str qualified-fixture) (str output)])]
+    (run-command! {:command (java-command "generate" java-trace)
+                   :directory root
+                   :timeout-ms 300000})
+    (Files/copy probe source
+                (into-array StandardCopyOption
+                            [StandardCopyOption/REPLACE_EXISTING]))
+    (run-command! {:command ["dotnet" "build" (str project)
+                             "--nologo" "--verbosity:minimal"
+                             "--no-restore" "--no-incremental" "-warnaserror"]
+                   :directory consumer-root
+                   :timeout-ms 300000})
+    (run-command! {:command (dotnet-command "generate" dotnet-trace)
+                   :directory consumer-root
+                   :timeout-ms 300000})
+    (run-command! {:command (java-command "observe" java-trace)
+                   :directory root
+                   :timeout-ms 300000})
+    (run-command! {:command (dotnet-command "observe" dotnet-trace)
+                   :directory consumer-root
+                   :timeout-ms 300000})
+    (let [java-summary (metadata-workflow-trace-summary java-trace)
+          dotnet-summary (metadata-workflow-trace-summary dotnet-trace)
+          comparison (differential/compare-results java-trace dotnet-trace)]
+      (when-let [mismatch (:mismatch comparison)]
+        (fail! "Generated XMP/Preflight workflow differs across Java and .NET"
+               {:java (str java-trace)
+                :dotnet (str dotnet-trace)
+                :mismatch mismatch
+                :replay
+                "clojure -M -e \"(require '[dripsharp.pdfcube.preflight-differential :as preflight]) (preflight/verify!)\""}))
+      (let [summary
+            {:generator metadata-workflow-generator
+             :qualified-fixture
+             "research/pdfbox/preflight/src/test/resources/org/apache/pdfbox/preflight/metadata/PDFAMetaDataValidationTestTrailingNul.pdf"
+             :java java-summary
+             :dotnet dotnet-summary
+             :comparison comparison
+             :runtime {:locale "en-US" :timezone "UTC"}
+             :replay
+             "clojure -M -e \"(require '[dripsharp.pdfcube.preflight-differential :as preflight]) (preflight/verify!)\""}]
+        (spit (str (paths/resolve-path workflow-root "summary.edn"))
+              (str (pr-str summary) "\n"))
+        summary))))
 
 (defn verify!
   "Runs deterministic dependency-closed packing, an isolated focused consumer,
@@ -358,7 +481,7 @@
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
          package-proof
          (package-fn {:workspace-root root
-                      :profile "pdfcube-preflight"
+                      :profile "targets/pdfcube/profiles/preflight.edn"
                       :run-command! run-command!})
          package-contract (validate-package-contract! package-proof)
          verification (:verification package-proof)
@@ -373,56 +496,62 @@
            (Files/createDirectories (make-array FileAttribute 0)))
          java-trace (paths/resolve-path proof-root "upstream-java.tsv")
          dotnet-trace (paths/resolve-path proof-root "package-dotnet.tsv")]
-     (compile-and-run-oracle!
-      run-command! root generation proof-root java-trace fixtures)
-     (run-package-probe!
-      run-command! root package-proof dotnet-trace fixtures)
-     (let [comparison (assert-match! java-trace dotnet-trace)
-           trace (trace-summary java-trace)
-           perturbation
-           (prove-mismatch-detection!
-            java-trace
-            (paths/resolve-path proof-root "deliberate-mismatch.tsv"))
-           _ (harness/clean-directory! (:packages-root package-proof))
-           corpus-proof
-           (corpus-fn
-            {:workspace-root root
-             :run-command! run-command!
-             :pack-fn (fn [_] package-proof)})
-           summary
-           {:profile "pdfcube-preflight"
-            :source {:version (baseline/upstream-version :pdfcube) :revision pinned-revision}
-            :package
-            (merge
-             (select-keys (:identity package-proof)
-                          [:id :version :sha256])
-             {:contract package-contract})
-            :consumer (:dependency-proof package-proof)
-            :generation
-            (select-keys
-             (:summary (:emission generation))
-             [:compilation-units :declarations :generated-files
-              :missing-source-mappings :hard-failures :collisions])
-            :public-surface (:public-surface verification)
-            :trace trace
-            :comparison comparison
-            :deliberate-mismatch
-            {:line (get-in perturbation [:mismatch :line])
-             :expected (get-in perturbation [:mismatch :expected])
-             :actual (get-in perturbation [:mismatch :actual])}
-            :corpus (:summary corpus-proof)
-            :host (current-host)
-            :supported-hosts supported-hosts
-            :proof-root proof-root}]
-       (spit (str (paths/resolve-path proof-root "summary.edn"))
-             (str (pr-str (dissoc summary :proof-root)) "\n"))
-       (println
-        "Pinned Java/package DripSharp.PdfCarton.Preflight differential passed:"
-        (pr-str
-         {:source (:source summary)
-          :package (select-keys (:package summary) [:id :version :sha256])
-          :trace (:trace summary)
-          :corpus (select-keys (:corpus summary)
-                               [:cases :matched :mismatched])
-          :host (:host summary)}))
-       summary))))
+     (let [java-context
+           (compile-and-run-oracle!
+            run-command! root generation proof-root java-trace fixtures)
+           package-context
+           (run-package-probe!
+            run-command! root package-proof dotnet-trace fixtures)
+           metadata-workflow
+           (run-metadata-workflow!
+            run-command! root proof-root java-context package-context)]
+       (let [comparison (assert-match! java-trace dotnet-trace)
+             trace (trace-summary java-trace)
+             perturbation
+             (prove-mismatch-detection!
+              java-trace
+              (paths/resolve-path proof-root "deliberate-mismatch.tsv"))
+             _ (harness/clean-directory! (:packages-root package-proof))
+             corpus-proof
+             (corpus-fn
+              {:workspace-root root
+               :run-command! run-command!
+               :pack-fn (fn [_] package-proof)})
+             summary
+             {:profile "pdfcube-preflight"
+              :source {:version (baseline/upstream-version :pdfcube) :revision pinned-revision}
+              :package
+              (merge
+               (select-keys (:identity package-proof)
+                            [:id :version :sha256])
+               {:contract package-contract})
+              :consumer (:dependency-proof package-proof)
+              :generation
+              (select-keys
+               (:summary (:emission generation))
+               [:compilation-units :declarations :generated-files
+                :missing-source-mappings :hard-failures :collisions])
+              :public-surface (:public-surface verification)
+              :trace trace
+              :metadata-workflow metadata-workflow
+              :comparison comparison
+              :deliberate-mismatch
+              {:line (get-in perturbation [:mismatch :line])
+               :expected (get-in perturbation [:mismatch :expected])
+               :actual (get-in perturbation [:mismatch :actual])}
+              :corpus (:summary corpus-proof)
+              :host (current-host)
+              :supported-hosts supported-hosts
+              :proof-root proof-root}]
+         (spit (str (paths/resolve-path proof-root "summary.edn"))
+               (str (pr-str (dissoc summary :proof-root)) "\n"))
+         (println
+          "Pinned Java/package DripSharp.PdfCarton.Preflight differential passed:"
+          (pr-str
+           {:source (:source summary)
+            :package (select-keys (:package summary) [:id :version :sha256])
+            :trace (:trace summary)
+            :corpus (select-keys (:corpus summary)
+                                 [:cases :matched :mismatched])
+            :host (:host summary)}))
+         summary)))))

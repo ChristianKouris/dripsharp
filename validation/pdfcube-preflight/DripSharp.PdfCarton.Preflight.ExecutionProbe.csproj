@@ -5,8 +5,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="Program.cs" />
     <ProjectReference Include="../../target/generated/pdfcarton/src/DripSharp.PdfCarton.Preflight/DripSharp.PdfCarton.Preflight.csproj" />
   </ItemGroup>
 </Project>

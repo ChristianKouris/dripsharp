@@ -185,7 +185,8 @@
          preflight-differential/expected-consumer-target-framework))
   (doseq [project
           ["validation/pdfcube-preflight/DripSharp.PdfCarton.Preflight.HostSmoke.csproj"
-           "validation/pdfcube-preflight/DripSharp.PdfCarton.Preflight.ExecutionProbe.csproj"]]
+           "validation/pdfcube-preflight/DripSharp.PdfCarton.Preflight.ExecutionProbe.csproj"
+           "validation/pdfcube-preflight/DripSharp.PdfCarton.Preflight.MetadataWorkflow.csproj"]]
     (is (str/includes? (slurp project)
                        "<TargetFramework>net10.0</TargetFramework>")))
   (testing "missing or incorrect executable consumer evidence fails closed"
@@ -207,6 +208,49 @@
          source
          "path.GetClosestTypePosition(typeof(int))"))
     (is (not (str/includes? source "GetClosestTypePosition<")))))
+
+(deftest generated-metadata-workflow-trace-is-bounded-and-cross-runtime
+  (let [generator preflight-differential/metadata-workflow-generator
+        rows
+        (for [producer ["java" "dotnet"]
+              case-id (:case-ids generator)]
+          (str "metadata-workflow\t" producer "/" case-id
+               "\tstage=complete|parse=ok|valid=true"))
+        summary
+        (preflight-differential/metadata-workflow-trace-summary
+         (trace-file (str (str/join "\n" rows) "\n")))]
+    (is (= 1 (:version generator)))
+    (is (= 3 (:generated-cases generator)))
+    (is (= 24 (:observations summary)))
+    (is (= 12 (:cases summary)))
+    (is (= ["java" "dotnet"] (:producers summary)))
+    (is (some #{"utf16-encoding"} (:case-ids generator)))
+    (is (some #{"invalid-control"} (:case-ids generator)))
+    (is (some #{"missing-required"} (:case-ids generator)))))
+
+(deftest generated-metadata-workflow-trace-fails-closed
+  (let [error
+        (caught
+         #(preflight-differential/metadata-workflow-trace-summary
+           (trace-file
+            "metadata-workflow\tjava/baseline-valid\tstage=complete\n")))]
+    (is (= :pdfcube-preflight-differential-failed
+           (:kind (ex-data error))))))
+
+(deftest metadata-workflow-probes-cover-cross-runtime-semantics
+  (let [java (slurp "validation/pdfcube-preflight/MetadataWorkflowOracle.java")
+        dotnet (slurp "validation/pdfcube-preflight/MetadataWorkflowProbe.cs")]
+    (doseq [source [java dotnet]
+            required ["constructed-properties" "utf16-encoding"
+                      "namespace-remap" "date-minimum" "number-maximum"
+                      "missing-optional" "missing-required" "invalid-control"
+                      "generated-002" "metadata-workflow-v1"]]
+      (is (str/includes? source required)
+          (pr-str {:required required})))
+    (is (str/includes? java "PreflightParser.validate"))
+    (is (str/includes? dotnet "PreflightParser.Validate"))
+    (is (str/includes? java "new DomXmpParser().parse"))
+    (is (str/includes? dotnet "new DomXmpParser().Parse"))))
 
 (deftest supported-host-matrix-is-exact
   (is (= #{["windows" "x64"] ["windows" "arm64"]

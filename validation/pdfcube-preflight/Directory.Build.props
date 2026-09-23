@@ -1,0 +1,5 @@
+<Project>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'DripSharp.PdfCarton.Preflight.MetadataWorkflow'">
+    <BaseIntermediateOutputPath>obj/metadata-workflow/</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>

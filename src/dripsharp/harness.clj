@@ -575,6 +575,41 @@
        :profile profile-name
        :cycle cycle}))))
 
+(defn- resolve-sibling-profile-selector
+  [root owner-selector dependency-selector]
+  (let [configured (paths/resolve-path root dependency-selector)]
+    (if (paths/regular-file? configured)
+      dependency-selector
+      (let [owner (paths/resolve-path root owner-selector)
+            directory (.getParent owner)
+            candidates
+            (when (and (paths/regular-file? owner)
+                       directory
+                       (= "profiles" (str (.getFileName directory))))
+              (with-open [entries (Files/list directory)]
+                (->> (.toList entries)
+                     (filter paths/regular-file?)
+                     (filter #(str/ends-with? (str %) ".edn"))
+                     (filter
+                      (fn [candidate]
+                        (= dependency-selector
+                           (:profile
+                            (util/read-single-edn-string!
+                             (slurp (str candidate)))))))
+                     vec)))]
+        (case (count candidates)
+          0 dependency-selector
+          1 (-> (str (.relativize (paths/absolute root)
+                                  (paths/absolute (first candidates))))
+                (str/replace "\\" "/"))
+          (throw
+           (ex-info
+            "Generation profile dependency selector is ambiguous"
+            {:kind :ambiguous-generation-profile-dependency
+             :profile owner-selector
+             :dependency dependency-selector
+             :candidates (mapv str candidates)})))))))
+
 (defn- resolve-profile-dag!
   [root profile-name include-dependencies? read-profile-fn read-destination-fn]
   (let [prepared-by-selector (atom {})
@@ -619,7 +654,10 @@
                           (if include-dependencies?
                             (mapv
                              (fn [dependency-selector]
-                               (let [dependency (load! dependency-selector)
+                               (let [dependency-selector
+                                     (resolve-sibling-profile-selector
+                                      root selector dependency-selector)
+                                     dependency (load! dependency-selector)
                                      dependency-name
                                      (get-in dependency [:profile :profile])]
                                  (when (= :visiting (get @states dependency-name))

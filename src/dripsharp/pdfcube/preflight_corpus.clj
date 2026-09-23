@@ -1021,7 +1021,7 @@
          validated (validate-manifest! root manifest)
          package-proof
          (pack-fn {:workspace-root root
-                   :profile "pdfcube-preflight"
+                   :profile "targets/pdfcube/profiles/preflight.edn"
                    :run-command! run-command!})
          proof-root
          (harness/clean-directory!

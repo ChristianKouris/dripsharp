@@ -472,6 +472,23 @@
     (is (= :unknown-generation-profile (:kind (ex-data error))))
     (is (paths/regular-file? stale))))
 
+(deftest canonical-dependency-names-resolve-within-a-target-profile-directory
+  (let [root (temp-directory)
+        main
+        (write-file!
+         root "targets/acme/profiles/main.edn"
+         "{:schema-version 1 :profile \"acme-main\"}\n")
+        dependency
+        (write-file!
+         root "targets/acme/profiles/dependency.edn"
+         "{:schema-version 1 :profile \"acme-dependency\"}\n")]
+    (is (= "targets/acme/profiles/dependency.edn"
+           (#'harness/resolve-sibling-profile-selector
+            root (str main) "acme-dependency")))
+    (is (= "unknown-dependency"
+           (#'harness/resolve-sibling-profile-selector
+            root (str main) "unknown-dependency")))))
+
 (deftest missing-destination-selection-fails-before-cleaning-output
   (let [root (temp-directory)
         stale (create-file! root "target/stale/output.cs")
