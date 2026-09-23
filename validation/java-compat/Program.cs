@@ -396,6 +396,7 @@ internal static class Program
                 var operation = fields[0] + "/" + fields[3];
                 var arity = operation switch
                 {
+                    "collections/run" => 2,
                     "numeric/int-div" or "numeric/int-rem" or "numeric/long-div" or "numeric/long-rem" => 2,
                     "byte-buffer/wrap" or "string/hash" or "long/hash" => 1,
                     "byte-buffer/capacity" or "byte-buffer/position" or "byte-buffer/limit" or
@@ -478,6 +479,7 @@ internal static class Program
                 {
                     switch (operation)
                     {
+                        case "collections/run": result = StringToken(CollectionProbe.Run(IntValue(values[0]), (string)values[1]!)); break;
                         case "numeric/int-div": result = "i:" + JavaCompat.IntegralDivide(unchecked((int)numericLeft), unchecked((int)numericRight)).ToString(CultureInfo.InvariantCulture); break;
                         case "numeric/int-rem": result = "i:" + JavaCompat.IntegralRemainder(unchecked((int)numericLeft), unchecked((int)numericRight)).ToString(CultureInfo.InvariantCulture); break;
                         case "numeric/long-div": result = "i:" + JavaCompat.IntegralDivide(numericLeft, numericRight).ToString(CultureInfo.InvariantCulture); break;

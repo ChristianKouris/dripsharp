@@ -334,6 +334,7 @@ public final class JavaCompatOracle {
         throw new IllegalArgumentException("Duplicate case step");
       var operation = fields[0] + "/" + fields[3];
       int arity = switch (operation) {
+        case "collections/run" -> 2;
         case "numeric/int-div", "numeric/int-rem", "numeric/long-div", "numeric/long-rem" -> 2;
         case "byte-buffer/wrap", "string/hash", "long/hash" -> 1;
         case "byte-buffer/capacity", "byte-buffer/position", "byte-buffer/limit",
@@ -406,6 +407,7 @@ public final class JavaCompatOracle {
       var exception = "none";
       try {
         switch (operation) {
+          case "collections/run" -> result = stringToken(micro.CollectionMachine.run(intValue(values[0]), (String) values[1]));
           case "numeric/int-div" -> result = "i:" + ((int)numericLeft / (int)numericRight);
           case "numeric/int-rem" -> result = "i:" + ((int)numericLeft % (int)numericRight);
           case "numeric/long-div" -> result = "i:" + (numericLeft / numericRight);

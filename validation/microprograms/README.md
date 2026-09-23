@@ -156,3 +156,7 @@ exercise invalid accepted Java source, an existing unsupported captured local
 class, and an invalid generated-code perturbation. These expected failures must
 be reported at their real stages. No generated C# modification is a durable
 implementation or shipped source change.
+
+The [collection family](collections/README.md) adds bounded seeded state machines
+for equality/hash, collisions, nulls, live views, aliases, and specified order.
+It compares the same saved input on the direct JavaCompat and translated paths.

@@ -1734,9 +1734,11 @@ public
 sealed class JavaDeque<T> : ICollection<T>
 {
     private readonly LinkedList<T> values = new();
+    private readonly bool allowNull;
     internal JavaDeque()
     {
     }
+    internal JavaDeque(bool allowNull) => this.allowNull = allowNull;
     internal JavaDeque(int initialCapacity)
     {
         if (initialCapacity < 0) throw new ArgumentException("Initial capacity must not be negative.");
@@ -1757,20 +1759,28 @@ sealed class JavaDeque<T> : ICollection<T>
         values.RemoveFirst();
         return value;
     }
-    internal void Push(T value) => values.AddFirst(value);
-    internal void AddLast(T value) => values.AddLast(value);
+    internal void Push(T value) => AddFirst(value);
+    internal void AddLast(T value)
+    {
+        if (!allowNull && value is null) throw new NullReferenceException();
+        values.AddLast(value);
+    }
     internal bool Offer(T value)
     {
-        values.AddLast(value);
+        AddLast(value);
         return true;
     }
-    internal void AddFirst(T value) => values.AddFirst(value);
+    internal void AddFirst(T value)
+    {
+        if (!allowNull && value is null) throw new NullReferenceException();
+        values.AddFirst(value);
+    }
     internal bool IsEmpty() => values.Count == 0;
     internal JavaIterator<T> DescendingIterator() =>
         JavaCompat.Iterator(values.Reverse());
     public int Count => values.Count;
     public bool IsReadOnly => false;
-    public void Add(T item) => values.AddLast(item);
+    public void Add(T item) => AddLast(item);
     public void Clear() => values.Clear();
     public bool Contains(T item) => values.Contains(item);
     public void CopyTo(T[] array, int arrayIndex) => values.CopyTo(array, arrayIndex);
@@ -2485,9 +2495,9 @@ internal static partial class JavaCompat
     internal static int CollectionCount(IEnumerable collection) => collection.Cast<object?>().Count();
     internal static bool CollectionIsEmpty(IEnumerable collection) => !collection.Cast<object?>().Any();
     internal static bool CollectionContains<T>(IEnumerable<T> collection, object? value) =>
-        value is T typed && collection.Contains(typed);
+        TryMapKey(value, out T typed) && collection.Contains(typed);
     internal static bool CollectionRemove<T>(ICollection<T> collection, object? value) =>
-        value is T typed && collection.Remove(typed);
+        TryMapKey(value, out T typed) && collection.Remove(typed);
     internal static bool ContainsAll<T>(IEnumerable<T> collection, System.Collections.IEnumerable values)
     {
         var set = new HashSet<T>(collection);
@@ -2601,9 +2611,9 @@ internal static partial class JavaCompat
     internal static int MapCount<K, V>(IDictionary<K, V> map) where K : notnull => map.Count;
     internal static int MapCount<K, V>(IReadOnlyDictionary<K, V> map) where K : notnull => map.Count;
     internal static bool MapContainsValue<K, V>(IDictionary<K, V> map, object? value) where K : notnull =>
-        value is V typed && map.Values.Contains(typed);
+        TryMapKey(value, out V typed) && map.Values.Contains(typed);
     internal static bool MapContainsValue<K, V>(IReadOnlyDictionary<K, V> map, object? value) where K : notnull =>
-        value is V typed && map.Values.Contains(typed);
+        TryMapKey(value, out V typed) && map.Values.Contains(typed);
     internal static V MapRemove<K, V>(IDictionary<K, V> map, object? key) where K : notnull
     {
         if (!TryMapKey(key, out K typed)) return default!;
@@ -3128,6 +3138,7 @@ internal static partial class JavaCompat
     {
         if (value is JavaReadOnlyAdapter adapter) value = adapter.MutableSource;
         if (value is null) return 0;
+        if (value is string text) return StringHashCode(text);
         if (value is Uri uri)
         {
             var schemeHash = StringComparer.OrdinalIgnoreCase.GetHashCode(UriScheme(uri) ?? "");

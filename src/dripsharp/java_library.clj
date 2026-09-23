@@ -1967,7 +1967,7 @@
        (sequence-node
         [(raw "new global::DripSharp.Runtime.JavaDeque<")
          (type-node ctx (first (.getActualTypeArguments assigned-reference)))
-         (raw ">()")])
+         (raw ">(true)")])
 
        (and (= "java.util.Collection" assigned-type)
             (= 1 (count (.getActualTypeArguments assigned-reference)))
@@ -3098,6 +3098,10 @@
     "executable:java.util.LinkedList#add(java.lang.Object)"
     "executable:java.util.LinkedList#addFirst(java.lang.Object)"
     "executable:java.util.Deque#push(java.lang.Object)"
+    "executable:java.util.Deque#addFirst(java.lang.Object)"
+    "executable:java.util.Deque#addLast(java.lang.Object)"
+    "executable:java.util.ArrayDeque#addFirst(java.lang.Object)"
+    "executable:java.util.ArrayDeque#addLast(java.lang.Object)"
     "executable:java.util.HashMap#put(java.lang.Object,java.lang.Object)"
     "executable:java.util.HashMap#putIfAbsent(java.lang.Object,java.lang.Object)"
     "executable:java.util.LinkedHashMap#put(java.lang.Object,java.lang.Object)"
@@ -4822,7 +4826,7 @@
      [{:keys [target-node arguments]}]
      {:node (compat-call "DequePush" (into [target-node] arguments))}),
    :java-library.mapping.executable/handler-0225
-   (fn [{:keys [target-node]}] {:node (sequence-node [target-node (raw ".Poll()")])}),
+   (fn [{:keys [target-node]}] {:node (sequence-node [target-node (raw ".Poll()!")])}),
    :java-library.mapping.executable/handler-0406
    (fn [_] {:node (compat-call "ConsoleInstance" [])}),
    :java-library.mapping.executable/handler-0405 (fn [_] {:node (compat-call "NanoTime" [])}),

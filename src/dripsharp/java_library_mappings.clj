@@ -799,7 +799,9 @@
    [:java-library.mapping.executable/handler-0204
     ["executable:java.util.GregorianCalendar#from(java.time.ZonedDateTime)"]]
    [:java-library.mapping.executable/handler-0205 ["executable:java.util.Deque#pop()"]]
-   [:java-library.mapping.executable/handler-0206 ["executable:java.util.Deque#removeFirst()"]]
+   [:java-library.mapping.executable/handler-0206
+    ["executable:java.util.Deque#removeFirst()"
+     "executable:java.util.Deque#remove()"]]
    [:java-library.mapping.executable/handler-0207
     ["executable:java.util.Deque#push(java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0208
@@ -830,7 +832,9 @@
    [:java-library.mapping.executable/handler-0223
     ["executable:java.util.Queue#add(java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0224 ["executable:java.util.Queue#peek()"]]
-   [:java-library.mapping.executable/handler-0225 ["executable:java.util.Queue#poll()"]]
+   [:java-library.mapping.executable/handler-0225
+    ["executable:java.util.Queue#poll()"
+     "executable:java.util.Deque#poll()"]]
    [:java-library.mapping.executable/handler-0226
     ["executable:java.util.Collection#add(java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0227 ["executable:java.util.Collection#isEmpty()"]]
@@ -1566,7 +1570,8 @@
     ["executable:java.util.Iterator#forEachRemaining(java.util.function.Consumer)"]]
    [:java-library.mapping.executable/handler-0617 ["executable:java.util.ListIterator#remove()"]]
    [:java-library.mapping.executable/handler-0618
-    ["executable:java.util.Collection#remove(java.lang.Object)"]]
+    ["executable:java.util.Collection#remove(java.lang.Object)"
+     "executable:java.util.Deque#remove(java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0619
     ["executable:java.util.Collection#toArray()"
      "executable:java.util.ArrayList#toArray()"

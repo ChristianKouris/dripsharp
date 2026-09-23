@@ -14,5 +14,6 @@
     <Compile Include="../../runtime/DripSharp.JavaRegexUnicodeData.cs"
              Link="Runtime/DripSharp.JavaRegexUnicodeData.cs" />
     <Compile Include="Program.cs" />
+    <Compile Include="CollectionProbe.cs" />
   </ItemGroup>
 </Project>

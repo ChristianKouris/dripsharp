@@ -368,3 +368,11 @@ DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M \
 Focused deterministic replay without generated samples is available with
 `--samples 0 --case parse-little`. This remains an explicit local workload and
 is not registered in hosted or default test discovery.
+
+## Collection sequences
+
+The local [collection family](../microprograms/collections/README.md) records
+bounded list/map/set/deque state machines, including collision keys, live views,
+nulls, equality/hash, defined ordering, and overload-sensitive removal. Its
+combined command feeds the identical saved input to this direct runner and the
+actual translated Java batch. It is opt-in and adds no hosted live workload.

@@ -3,6 +3,7 @@
   (:refer-clojure :exclude [run!])
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [dripsharp.collection-cases :as collection]
             [dripsharp.differential :as differential]
             [dripsharp.differential-cases :as cases]
             [dripsharp.harness :as harness]
@@ -338,7 +339,8 @@
                  "--release" (str (:java-release contract))
                  "-encoding" "UTF-8"
                  "-d" (str classes)
-                 (str oracle-source)]})
+                 (str oracle-source)
+                 (str (paths/resolve-path root "validation/microprograms/collections/subjects/micro/CollectionMachine.java"))]})
      (run-command!
       {:directory root
        :timeout-ms (get-in contract [:oracle :run-timeout-ms])
@@ -406,7 +408,8 @@
 
 (def case-families
   "Local-only concrete operation contracts. Registration launches no processes."
-  {"byte-buffer"
+  {"collections" {"run" {:arguments [#{"i"} #{"u"}] :exceptions #{"none"}}}
+   "byte-buffer"
    (merge
     {"wrap" {:arguments [#{"b" "n"}] :exceptions #{"none" "null-pointer"}}
      "select" {:arguments [#{"u"}] :exceptions #{"none" "null-pointer" "illegal-argument"}}
@@ -540,6 +543,7 @@
                                             (contains? types (subs value 0 1)))
                                           (:arguments spec) arguments))
                        (contains? (:exceptions spec) expected-exception)
+                       (or (not= family "collections") (collection/valid-arguments? arguments))
                        (or (not (contains? #{"long" "numeric"} family))
                            (every? #(<= Long/MIN_VALUE (bigint (subs % 2)) Long/MAX_VALUE)
                                    arguments)))
@@ -591,7 +595,8 @@
                  (str/trim (command! :dotnet-version 10000 ["dotnet" "--version"])))
         _ (command! :java-compile (get-in contract [:oracle :compile-timeout-ms])
                     [javac "--release" (:java-release contract) "-encoding" "UTF-8"
-                     "-d" classes (configured-path root (get-in contract [:oracle :source]))])
+                     "-d" classes (configured-path root (get-in contract [:oracle :source]))
+                     (paths/resolve-path root "validation/microprograms/collections/subjects/micro/CollectionMachine.java")])
         _ (command! :dotnet-build (get-in contract [:probe :build-timeout-ms])
                     ["dotnet" "build" project "--nologo" "--configuration" "Release"
                      "--verbosity:minimal" "-warnaserror" "--output" binaries])

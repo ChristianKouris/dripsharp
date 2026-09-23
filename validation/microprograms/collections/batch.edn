@@ -1,0 +1,11 @@
+{:schema-version 1
+ :id "collections"
+ :generator {:id :collection-sequences :version 1 :seed nil}
+ :sources ["subjects/micro/CollectionMachine.java"]
+ :configuration "../destination.edn"
+ :input "cases.tsv"
+ :java-observer "../MicroObserver.java"
+ :dotnet-observer "../Program.cs"
+ :operations {"run" {:java-type "micro.CollectionMachine" :java-method "run"
+                      :dotnet-type "DripSharp.Microprograms.CollectionMachine" :dotnet-method "Run"
+                      :parameters ["int" "string"]}}}

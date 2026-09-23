@@ -34,7 +34,8 @@
     (doseq [live '[dripsharp.differential-generation-live
                    dripsharp.java-compat-cases-live
                    dripsharp.microprogram-live
-                   dripsharp.numeric-microprogram-live]]
+                   dripsharp.numeric-microprogram-live
+                   dripsharp.collection-microprogram-live]]
       (is (not (contains? discovered live)) (str live)))))
 
 (deftest hosted-workflows-do-not-admit-new-local-campaigns
@@ -46,6 +47,8 @@
                    "dripsharp.microprogram-live"
                    "dripsharp.numeric-microprogram-live"
                    "dripsharp.numeric-microprogram"
+                   "dripsharp.collection-microprogram-live"
+                   "dripsharp.collection-microprogram"
                    "products/pdfcarton/tests/DripSharp.PdfCarton.ReleaseSmoke"
                    "products/pdfcarton/tests/DripSharp.PdfCarton.Tests"]]
     (doseq [file files
