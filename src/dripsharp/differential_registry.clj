@@ -88,6 +88,17 @@
       :target-frameworks {:libraries "netstandard2.0" :hosts "net10.0"}
       :families ["low-level" "document-lifecycle" "manipulation" "font-text"
                  "rendering" "interaction" "security" "printing"]
+      :generated-campaigns
+      {:font-render
+       {:execution :explicit-local-only
+        :generator-version 1
+        :default-sample {:fixed-pages 8 :original-fixtures 2 :seed 22 :case-count 4}
+        :maximum-raster-dimension 512
+        :default-duration-ms 900000
+        :maximum-duration-ms 3600000
+        :command ["clojure" "-J-Xmx28g" "-M" "-e"
+                  "(require 'dripsharp.pdfcube.font-render-differential) (dripsharp.pdfcube.font-render-differential/verify!)"]
+        :replay-command ["clojure" "-J-Xmx28g" "-M" "RUN/case-N/replay.clj"]}}
       :package-command ["clojure" "-J-Xmx28g" "-M:run" "differential"
                         "pdfcube" "pdfcube-pdfbox"]
       :generated-test-commands

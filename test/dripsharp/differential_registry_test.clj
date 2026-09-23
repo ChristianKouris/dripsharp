@@ -19,6 +19,8 @@
            (get-in inventory [:pdfcarton :oracle-java-release])))
     (is (= generation/generated-families (:fixed-families compat)))
     (is (= generation/generated-families (:generated-families compat)))
+    (is (= :explicit-local-only
+           (get-in inventory [:pdfcarton :generated-campaigns :font-render :execution])))
     (doseq [flag ["--seed" "--count" "--max-operations" "--max-value-units"
                   "--max-input-bytes" "--max-processes" "--max-ms"
                   "--shrink-attempts" "--shrink-ms"]]
@@ -37,13 +39,16 @@
                    dripsharp.semantics-microprogram-live
                    dripsharp.floating-microprogram-live
                    dripsharp.numeric-microprogram-live
-                   dripsharp.collection-microprogram-live]]
+                   dripsharp.collection-microprogram-live
+                   dripsharp.pdfcube-font-render-live]]
       (is (not (contains? discovered live)) (str live)))))
 
 (deftest hosted-workflows-do-not-admit-new-local-campaigns
   (let [root (paths/absolute ".github/workflows")
         files (with-open [stream (Files/list root)] (vec (.toArray stream)))
         forbidden ["dripsharp.differential-campaign"
+                   "dripsharp.pdfcube.font-render-differential"
+                   "dripsharp.pdfcube-font-render-live"
                    "dripsharp.differential-generation-live"
                    "dripsharp.java-compat-cases-live"
                    "dripsharp.microprogram-live"
