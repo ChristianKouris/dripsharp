@@ -42,12 +42,13 @@
   "Generates and records one input before either implementation sees it. Stops
   at the first failure, optionally shrinks semantic failures, and saves reports.
   Replay never calls the generator. All budgets include setup and both sides."
-  [{:keys [seed case-count output-directory replay-file max-processes max-ms
+  [{:keys [seed case-count family output-directory replay-file max-processes max-ms
            shrink-attempts shrink-ms generation-limits run-command!]
     :or {seed 1 case-count 10 output-directory "validation-output/generated-cases"
          max-processes 200 max-ms 300000 shrink-attempts 100 shrink-ms 30000
          run-command! process/run!}}]
   (when-not (and (integer? seed) (pos-int? case-count) (<= case-count 1000)
+                 (or (nil? family) (contains? compat/case-families family))
                  (pos-int? max-ms) (<= max-ms 3600000) (nat-int? shrink-attempts)
                  (<= shrink-attempts 10000) (pos-int? shrink-ms) (<= shrink-ms max-ms)
                  (pos-int? max-processes) (<= max-processes 10000))
@@ -69,7 +70,9 @@
                        (if replay-file
                          (gen/read-record replay-file)
                          (do (swap! counts update :generated inc)
-                             (gen/generate (unchecked-add (long seed) (long index)) generation-limits))))
+                             (gen/generate (unchecked-add (long seed) (long index))
+                                           (cond-> generation-limits
+                                             family (assoc :families [family]))))))
         result
         (try
           (let [initial (save! (next-record! 0))
@@ -114,6 +117,7 @@
                                :host (util/current-host) :proof-root (str proof-root)
                                :processes @(:used budget)
                                :limits {:cases case-count :processes max-processes :ms max-ms
+                                        :family family
                                         :shrink-attempts shrink-attempts :shrink-ms shrink-ms}})]
     (util/write-text! (paths/resolve-path proof-root "summary.edn") (str (pr-str summary) "\n"))
     summary))
@@ -124,14 +128,15 @@
           (loop [args args options {}]
             (if (empty? args) options
                 (let [[flag value & more] args
-                      key (get {"--seed" :seed "--count" :case-count "--output" :output-directory
+                      key (get {"--seed" :seed "--count" :case-count "--family" :family
+                                "--output" :output-directory
                                 "--replay" :replay-file "--max-processes" :max-processes
                                 "--max-ms" :max-ms "--shrink-attempts" :shrink-attempts
                                 "--shrink-ms" :shrink-ms} flag)]
                   (when-not (and key value (not (contains? options key)))
-                    (throw (ex-info "Expected --seed N --count N or --replay FILE; optional --output DIR, --max-processes N, --max-ms N, --shrink-attempts N, --shrink-ms N"
+                    (throw (ex-info "Expected --seed N --count N or --replay FILE; optional --family NAME, --output DIR, --max-processes N, --max-ms N, --shrink-attempts N, --shrink-ms N"
                                     {:kind :invalid-arguments})))
-                  (recur more (assoc options key (if (#{:output-directory :replay-file} key)
+                  (recur more (assoc options key (if (#{:family :output-directory :replay-file} key)
                                                    value (parse-long value)))))))
           summary (run! options)]
       (prn summary)

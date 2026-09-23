@@ -414,7 +414,29 @@
                              :exceptions #{"none" "null-pointer" "buffer-underflow"}}}
    "string" {"hash" {:arguments [#{"u" "n"}]
                      :exceptions #{"none" "null-pointer"}}}
-   "long" {"hash" {:arguments [#{"i"}] :exceptions #{"none"}}}})
+   "long" {"hash" {:arguments [#{"i"}] :exceptions #{"none"}}}
+   "file" {"inspect" {:arguments [#{"u" "n"}]
+                      :exceptions #{"none" "null-pointer"}}
+           "absolute" {:arguments [#{"u" "n"}]
+                       :exceptions #{"none" "null-pointer"}}
+           "parent-child" {:arguments [#{"u" "n"} #{"u" "n"}]
+                           :exceptions #{"none" "null-pointer"}}
+           "file-parent-child" {:arguments [#{"u" "n"} #{"u" "n"}]
+                                :exceptions #{"none" "null-pointer"}}
+           "uri" {:arguments [#{"u" "n"}]
+                  :exceptions #{"none" "null-pointer" "illegal-argument"}}
+           "equals" {:arguments [#{"u" "n"} #{"u" "n"}]
+                     :exceptions #{"none" "null-pointer"}}
+           "to-path" {:arguments [#{"u" "n"}]
+                      :exceptions #{"none" "null-pointer" "invalid-path"}}
+           "create" {:arguments [#{"u" "n"}]
+                     :exceptions #{"none" "null-pointer" "io"}}
+           "delete" {:arguments [#{"u" "n"}]
+                     :exceptions #{"none" "null-pointer"}}
+           "open" {:arguments [#{"u" "n"}]
+                   :exceptions #{"none" "null-pointer" "file-not-found"}}
+           "list-count" {:arguments [#{"u" "n"}]
+                         :exceptions #{"none" "null-pointer"}}}})
 
 (defn select-cases
   "Validates all input operations before selecting complete cases. Unknown

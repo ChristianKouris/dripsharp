@@ -43,6 +43,19 @@
       (is (= record (gen/validate! record)))))
   (is (< 1 (count (set (map #(count (:operations (gen/generate %))) (range 10)))))))
 
+(deftest file-family-generation-is-explicit-bounded-and-replayable
+  (let [record (gen/generate 1 {:families ["file"] :max-operations 12})]
+    (is (= record (gen/generate 1 {:families ["file"] :max-operations 12})))
+    (is (<= 1 (count (:operations record)) 12))
+    (is (every? #(and (= "file" (:family %))
+                      (= "inspect" (:operation %))
+                      (= [] (:requires %))
+                      (contains? #{"none" "null-pointer"} (:expected-exception %)))
+                (:operations record)))
+    (is (= record (gen/validate! record)))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (gen/generate 1 {:families ["unknown"]})))))
+
 (deftest boundary-values-preserve-exact-domains
   (doseq [kind [:bytes :integer :string :path]]
     (let [rng (Random. 42) tokens (repeatedly 100 #(gen/value rng kind 8))]

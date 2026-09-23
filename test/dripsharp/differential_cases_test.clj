@@ -52,6 +52,19 @@
     (is (thrown? clojure.lang.ExceptionInfo
                  (java-compat/select-cases text {:family "absent"})))))
 
+(deftest file-cases-cover-lexical-uri-query-and-mutation-contracts
+  (let [text (slurp "validation/java-compat/cases.tsv")
+        rows (java-compat/select-cases text {:family "file"})
+        operations (set (map :operation rows))]
+    (is (= 51 (count rows)))
+    (is (every? operations ["inspect" "absolute" "parent-child"
+                            "file-parent-child" "uri" "equals" "to-path"
+                            "create" "delete" "open" "list-count"]))
+    (is (some #(= ["to-path" "invalid-path"]
+                  [(:operation %) (:expected-exception %)]) rows))
+    (is (some #(= ["create" "io"]
+                  [(:operation %) (:expected-exception %)]) rows))))
+
 (deftest comparator-requires-values-state-and-exception-timing
   (is (= {:status :passed :matched 3} (compare-output output)))
   (doseq [actual [(str/replace output "i:-1" "i:255")

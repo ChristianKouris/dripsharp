@@ -95,6 +95,34 @@ internal static class Program
         throw new InvalidDataException("Invalid case value: " + token);
     }
 
+    private static string StringToken(string? value) => value is null
+        ? "n:"
+        : "u:" + string.Concat(value.Select(character =>
+            ((int)character).ToString("x4", CultureInfo.InvariantCulture)));
+
+    private static string FileInspection(JavaFile file) => string.Join("\u0001",
+        file.Pathname, file.Name, file.Parent ?? "\u0002",
+        file.IsAbsolute.ToString().ToLowerInvariant(), file.Exists.ToString().ToLowerInvariant(),
+        file.IsFile.ToString().ToLowerInvariant(), file.IsDirectory.ToString().ToLowerInvariant(),
+        JavaCompat.FileCanRead(file).ToString().ToLowerInvariant(),
+        JavaCompat.FileCanWrite(file).ToString().ToLowerInvariant(),
+        JavaCompat.FileIsHidden(file).ToString().ToLowerInvariant(),
+        file.IsFile ? file.Length.ToString(CultureInfo.InvariantCulture) : "\u0002",
+        file.GetHashCode().ToString(CultureInfo.InvariantCulture));
+
+    private static string FileCaseRoot(string input, string caseId)
+    {
+        var parent = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(input))!, "file-sandboxes");
+        var root = Path.Combine(parent, caseId);
+        Directory.CreateDirectory(Path.Combine(root, "dir"));
+        Directory.CreateDirectory(Path.Combine(root, "empty-dir"));
+        Directory.CreateDirectory(Path.Combine(root, "unicode-\u00e9"));
+        Directory.CreateDirectory(Path.Combine(root, ".hidden"));
+        File.WriteAllText(Path.Combine(root, "file.txt"), "abc", new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(root, "unicode-\u00e9", "\u96ea.txt"), "snow", new UTF8Encoding(false));
+        return root;
+    }
+
     private static void RunCases(string input, string output)
     {
         var lines = File.ReadAllLines(input, Encoding.UTF8);
@@ -103,6 +131,8 @@ internal static class Program
         var results = new List<string> { "DRIPSHARP_DIFFERENTIAL_CASE_RESULTS_V1" };
         var buffers = new Dictionary<string, JavaByteBuffer>();
         var identities = new HashSet<string>();
+        var sandboxParent = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(input))!, "file-sandboxes");
+        if (Directory.Exists(sandboxParent)) Directory.Delete(sandboxParent, true);
         try
         {
             foreach (var line in lines.Skip(1))
@@ -120,16 +150,26 @@ internal static class Program
                 {
                     "byte-buffer/wrap" or "string/hash" or "long/hash" => 1,
                     "byte-buffer/get" or "byte-buffer/get-int" => 0,
+                    "file/inspect" or "file/absolute" or "file/uri" or "file/to-path" or
+                    "file/create" or "file/delete" or "file/open" or "file/list-count" => 1,
+                    "file/parent-child" or "file/file-parent-child" or "file/equals" => 2,
                     _ => throw new InvalidDataException("Unknown operation: " + operation)
                 };
                 if (fields.Length != 5 + arity)
                     throw new InvalidDataException("Wrong argument count");
-                var value = arity == 0 ? null : CaseValue(fields[5]);
-                if (operation == "byte-buffer/wrap" && value is not null and not sbyte[] ||
-                    operation == "string/hash" && value is not null and not string ||
-                    operation == "long/hash" && value is not System.Numerics.BigInteger)
+                var values = fields.Skip(5).Select(CaseValue).ToArray();
+                if (operation == "byte-buffer/wrap" && values[0] is not null and not sbyte[] ||
+                    operation == "string/hash" && values[0] is not null and not string ||
+                    operation == "long/hash" && values[0] is not System.Numerics.BigInteger ||
+                    operation.StartsWith("file/", StringComparison.Ordinal) &&
+                    values.Any(value => value is not null and not string))
                     throw new InvalidDataException("Wrong argument type");
-                var number = operation == "long/hash" ? (long)(System.Numerics.BigInteger)value! : 0;
+                var number = operation == "long/hash" ? (long)(System.Numerics.BigInteger)values[0]! : 0;
+                var caseRoot = operation.StartsWith("file/", StringComparison.Ordinal)
+                    ? FileCaseRoot(input, fields[1]) : null;
+                for (var index = 0; index < values.Length; index++)
+                    if (values[index] is string text)
+                        values[index] = text.Replace("$ROOT", caseRoot ?? "$ROOT", StringComparison.Ordinal);
                 var result = "n:";
                 var exception = "none";
                 buffers.TryGetValue(key, out var buffer);
@@ -138,19 +178,40 @@ internal static class Program
                     switch (operation)
                     {
                         case "byte-buffer/wrap":
-                            var replacement = JavaByteBuffer.wrap((sbyte[])value!);
+                            var replacement = JavaByteBuffer.wrap((sbyte[])values[0]!);
                             buffer?.Dispose();
                             buffers[key] = buffer = replacement;
                             break;
                         case "byte-buffer/get": result = "i:" + buffer!.get().ToString(CultureInfo.InvariantCulture); break;
                         case "byte-buffer/get-int": result = "i:" + buffer!.getInt().ToString(CultureInfo.InvariantCulture); break;
-                        case "string/hash": result = "i:" + JavaCompat.StringHashCode((string)value!).ToString(CultureInfo.InvariantCulture); break;
+                        case "string/hash": result = "i:" + JavaCompat.StringHashCode((string)values[0]!).ToString(CultureInfo.InvariantCulture); break;
                         case "long/hash": result = "i:" + JavaCompat.LongHashCode(number).ToString(CultureInfo.InvariantCulture); break;
+                        case "file/inspect": result = StringToken(FileInspection(new JavaFile((string)values[0]!))); break;
+                        case "file/absolute": result = StringToken(new JavaFile((string)values[0]!).AbsolutePath); break;
+                        case "file/parent-child": result = StringToken(new JavaFile((string?)values[0], (string)values[1]!).Pathname); break;
+                        case "file/file-parent-child": result = StringToken(new JavaFile(
+                            values[0] is null ? (JavaFile?)null : new JavaFile((string)values[0]!), (string)values[1]!).Pathname); break;
+                        case "file/uri": result = StringToken(new JavaFile(new Uri((string)values[0]!, UriKind.RelativeOrAbsolute)).Pathname); break;
+                        case "file/equals": result = "i:" + (new JavaFile((string)values[0]!).Equals(new JavaFile((string)values[1]!)) ? 1 : 0); break;
+                        case "file/to-path": result = StringToken(JavaCompat.FileToPath(new JavaFile((string)values[0]!)).ToString()); break;
+                        case "file/create": result = "i:" + (JavaCompat.FileCreateNewFile(new JavaFile((string)values[0]!)) ? 1 : 0); break;
+                        case "file/delete": result = "i:" + (JavaCompat.FileDelete(new JavaFile((string)values[0]!)) ? 1 : 0); break;
+                        case "file/open":
+                            using (var stream = JavaCompat.OpenFileInput(new JavaFile((string)values[0]!)))
+                                result = "i:" + stream.ReadByte().ToString(CultureInfo.InvariantCulture);
+                            break;
+                        case "file/list-count":
+                            var children = new JavaFile((string)values[0]!).ListFiles();
+                            result = children is null ? "n:" : "i:" + children.Length.ToString(CultureInfo.InvariantCulture);
+                            break;
                     }
                 }
                 catch (ArgumentNullException) { exception = "null-pointer"; }
                 catch (NullReferenceException) { exception = "null-pointer"; }
                 catch (EndOfStreamException) { exception = "buffer-underflow"; }
+                catch (FileNotFoundException) { exception = "file-not-found"; }
+                catch (ArgumentException) { exception = operation == "file/to-path" ? "invalid-path" : "illegal-argument"; }
+                catch (IOException) { exception = "io"; }
                 var state = buffer is null ? "n:" : "i:" + buffer.position().ToString(CultureInfo.InvariantCulture);
                 results.Add(string.Join("\t", fields[0], fields[1], fields[2], fields[3],
                     exception, result, state));
@@ -160,6 +221,7 @@ internal static class Program
         finally
         {
             foreach (var buffer in buffers.Values) buffer.Dispose();
+            if (Directory.Exists(sandboxParent)) Directory.Delete(sandboxParent, true);
         }
     }
 

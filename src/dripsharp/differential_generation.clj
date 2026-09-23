@@ -6,7 +6,7 @@
             [dripsharp.util :as util])
   (:import [java.util Random]))
 
-(def generator-identity {:id :java-compat-operations :version 1})
+(def generator-identity {:id :java-compat-operations :version 2})
 (def default-limits {:max-operations 32 :max-value-units 32 :max-input-bytes 65536})
 
 (defn- require! [condition message]
@@ -67,7 +67,11 @@
   Native (family, case) runner state keys carry the explicit :handle identity."
   ([seed] (generate seed {}))
   ([seed options]
-   (let [limits (limits! (merge default-limits options))
+   (let [families (or (:families options) ["byte-buffer" "byte-buffer" "string" "long"])
+         _ (require! (and (vector? families) (seq families)
+                          (every? #{"byte-buffer" "string" "long" "file"} families))
+                     "Invalid generated family selection")
+         limits (limits! (merge default-limits (dissoc options :families)))
          rng (Random. (long seed))
          ;; Mix the first draw: adjacent java.util.Random seeds correlate in low bits.
          n (inc (int (mod (hash (.nextLong rng)) (:max-operations limits))))
@@ -75,14 +79,17 @@
          (loop [i 0 states {} rows []]
            (if (= i n)
              rows
-             (let [family (pick rng ["byte-buffer" "byte-buffer" "string" "long"])
+             (let [family (pick rng families)
                    handle (str "h" (.nextInt rng 3))
                    key [family handle]
                    state (get states key)
-                   operation (if (= family "byte-buffer")
-                               (pick rng (if state ["wrap" "get" "get" "get-int"]
-                                             ["wrap" "wrap" "get"])) "hash")
+                   operation (case family
+                               "byte-buffer" (pick rng (if state ["wrap" "get" "get" "get-int"]
+                                                           ["wrap" "wrap" "get"]))
+                               "file" "inspect"
+                               "hash")
                    kind (case family "byte-buffer" :bytes "long" :integer
+                              "file" :path
                               (pick rng [:string :path]))
                    arguments (if (contains? #{"get" "get-int"} operation) []
                                  [(if (and (not= family "long") (zero? (.nextInt rng 8)))
@@ -137,6 +144,8 @@
                      "long" (and (= operation "hash") (= 1 (count arguments))
                                  (str/starts-with? token "i:")
                                  (<= Long/MIN_VALUE (bigint (subs token 2)) Long/MAX_VALUE))
+                     "file" (and (= operation "inspect") (= 1 (count arguments))
+                                 (or (= token "n:") (str/starts-with? token "u:")))
                      false) "Invalid operation domain")
          (doseq [arg arguments]
            (when (contains? #{\b \u} (first arg))

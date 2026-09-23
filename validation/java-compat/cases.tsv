@@ -16,3 +16,54 @@ string	code-units	0	hash	none	u:00000009d8000061dc00ffff
 long	maximum	0	hash	none	i:9223372036854775807
 long	minimum	0	hash	none	i:-9223372036854775808
 long	beyond-double	0	hash	none	i:9007199254740993
+file	lexical	0	inspect	null-pointer	n:
+file	lexical	1	inspect	none	u:
+file	lexical	2	inspect	none	u:0020
+file	lexical	3	inspect	none	u:00720065006c00610074006900760065
+file	lexical	4	inspect	none	u:0061002f002f0062002f
+file	lexical	5	inspect	none	u:0061002f002e002e002f0062
+file	lexical	6	absolute	none	u:00720065006c00610074006900760065
+file	lexical	7	inspect	none	u:006100000062
+file	fixtures	0	inspect	none	u:00240052004f004f0054002f00660069006c0065002e007400780074
+file	fixtures	1	inspect	none	u:00240052004f004f0054002f006400690072
+file	fixtures	2	inspect	none	u:00240052004f004f0054002f006d0069007300730069006e0067
+file	fixtures	3	inspect	none	u:00240052004f004f0054002f0075006e00690063006f00640065002d00e9002f96ea002e007400780074
+file	fixtures	4	inspect	none	u:00240052004f004f0054002f002e00680069006400640065006e
+file	fixtures	5	list-count	none	u:00240052004f004f0054
+file	fixtures	6	list-count	none	u:00240052004f004f0054002f0065006d007000740079002d006400690072
+file	fixtures	7	list-count	none	u:00240052004f004f0054002f00660069006c0065002e007400780074
+file	parents	0	parent-child	none	n:	u:006300680069006c0064
+file	parents	1	parent-child	none	u:	u:002f006300680069006c0064
+file	parents	2	parent-child	none	u:0070006100720065006e0074	u:002f006300680069006c0064
+file	parents	3	parent-child	null-pointer	u:0070006100720065006e0074	n:
+file	parents	4	file-parent-child	none	n:	u:006300680069006c0064
+file	parents	5	file-parent-child	none	u:	u:006300680069006c0064
+file	parents	6	file-parent-child	null-pointer	u:0070006100720065006e0074	n:
+file	equality	0	equals	none	u:0061002f002f0062002f	u:0061002f0062
+file	equality	1	equals	none	u:0061002f002e002e002f0062	u:0062
+file	equality	2	equals	null-pointer	n:	u:
+file	paths	0	to-path	none	u:
+file	paths	1	to-path	none	u:0020
+file	paths	2	to-path	invalid-path	u:006100000062
+file	uris	0	uri	none	u:00660069006c0065003a002f0061002f002e002e002f0062
+file	uris	1	uri	none	u:00660069006c0065003a002f002f002f00610025003200300062
+file	uris	2	uri	none	u:00660069006c0065003a002f00610025003000300062
+file	uris	3	uri	none	u:00660069006c0065003a002f
+file	uris	4	uri	illegal-argument	u:00660069006c0065003a002f002f0068006f00730074002f0061
+file	uris	5	uri	illegal-argument	u:00660069006c0065003a002f0061003f0078
+file	uris	6	uri	illegal-argument	u:00660069006c0065003a002f006100230078
+file	uris	7	uri	illegal-argument	u:00660069006c0065003a0061
+file	uris	8	uri	illegal-argument	u:002f0061
+file	uris	9	uri	null-pointer	n:
+file	operations	0	open	none	u:00240052004f004f0054002f00660069006c0065002e007400780074
+file	operations	1	open	file-not-found	u:00240052004f004f0054002f006d0069007300730069006e0067
+file	operations	2	open	file-not-found	u:
+file	operations	3	open	file-not-found	u:006100000062
+file	operations	4	create	none	u:00240052004f004f0054002f0063007200650061007400650064002e007400780074
+file	operations	5	inspect	none	u:00240052004f004f0054002f0063007200650061007400650064002e007400780074
+file	operations	6	create	none	u:00240052004f004f0054002f0063007200650061007400650064002e007400780074
+file	operations	7	delete	none	u:00240052004f004f0054002f0063007200650061007400650064002e007400780074
+file	operations	8	inspect	none	u:00240052004f004f0054002f0063007200650061007400650064002e007400780074
+file	operations	9	delete	none	u:00240052004f004f0054002f0063007200650061007400650064002e007400780074
+file	operations	10	create	io	u:
+file	operations	11	create	io	u:006100000062

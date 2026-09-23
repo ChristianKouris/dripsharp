@@ -42,6 +42,8 @@ clojure -J-Xmx28g -M -m dripsharp.java-compat-differential \
   --cases validation/java-compat/cases.tsv --family byte-buffer --case signed
 ```
 
+Use `--family file` for the complete recorded file/path regression family.
+
 Omit `--case` for the family, or both selectors for the whole recorded batch.
 Selectors are exact and preserve all steps of each selected case. Empty
 selections and unknown operations fail. The default input is `cases.tsv` beside
@@ -113,13 +115,23 @@ The initial operations are:
 | `byte-buffer` | `get-int` | none | Signed big-endian 32-bit integer; cursor after the operation |
 | `string` | `hash` | UTF-16 string or null | JDK/JavaCompat string hash; absent state |
 | `long` | `hash` | signed 64-bit integer | JDK/JavaCompat long hash; absent state |
+| `file` | `inspect` | pathname or null | Lexical path/name/parent, predicates, regular-file length, and hash; absent state |
+| `file` | `absolute` | pathname or null | Absolute pathname; absent state |
+| `file` | `parent-child`, `file-parent-child` | parent and child pathnames or null | Constructed pathname; absent state |
+| `file` | `uri` | URI text or null | Constructed pathname or URI-validation exception; absent state |
+| `file` | `equals` | two pathnames or null | Java equality result; absent state |
+| `file` | `to-path` | pathname or null | NIO pathname or path-validation exception; absent state |
+| `file` | `create`, `delete` | pathname or null | Mutation result or operation exception; absent state |
+| `file` | `open` | pathname or null | First byte or file-opening exception; absent state |
+| `file` | `list-count` | pathname or null | Child count, without comparing order, or null; absent state |
 
 A buffer case begins without a buffer; reads before a successful wrap therefore
 observe a null reference. A failed wrap preserves any previous buffer. Exceptions
-are observed at each operation and execution continues. `none`, `null-pointer`,
-and `buffer-underflow` are the current semantic categories. The independent
-adapters map only the relevant JDK/.NET exception classes to these categories;
-unexpected exceptions escape as process failures. No exception text is compared.
+are observed at each operation and execution continues. Semantic categories
+include `none`, `null-pointer`, `buffer-underflow`, `invalid-path`,
+`illegal-argument`, `file-not-found`, and `io`. The independent adapters map
+only the relevant JDK/.NET exception classes to these categories; unexpected
+exceptions escape as process failures. No exception text is compared.
 
 Output has header `DRIPSHARP_DIFFERENTIAL_CASE_RESULTS_V1` and exactly seven
 columns: `family`, `case`, `step`, `operation`, `exception`, `result`, `state`.
@@ -127,6 +139,15 @@ Results and states use the same typed tokens. Exact ordered identities are
 checked before comparing values, exception categories/timing, and state.
 The byte-buffer observer reads the public cursor after success or failure; it
 does not use a compatibility helper to compute the expected JVM value.
+
+The file family expands the literal `$ROOT` marker to the same sandbox pathname
+beside the recorded `input.tsv` in both processes. Each process independently
+creates the same directories, regular files, Unicode names, hidden name, and
+missing paths, then removes the complete sandbox in a `finally` block. File
+observations retain empty and NUL-containing pathnames through construction and
+separately observe NIO, open, and create rejection. Directory length is omitted
+because Java leaves non-regular-file length unspecified; regular-file length is
+compared exactly. Directory listing order is never observed.
 
 ### Focused verification
 
@@ -158,9 +179,11 @@ reducer needs stable observation IDs, resource dependencies, and preserved
 exception intent. No additional dependency or automatic campaign is installed.
 The generator supports boundary-biased byte arrays, signed 64-bit integers,
 UTF-16 strings (including isolated surrogates), pathname strings, and interleaved
-variable-length operation sequences. Path strings currently exercise string
-hashing; this does **not** assert filesystem behavior or public `FileInfo`
-adaptation. Those boundaries remain defined in `doc/java-file-compatibility.md`.
+variable-length operation sequences. The explicit `file` family generates
+lexical constructor/query observations, including empty, whitespace, separator,
+parent-segment, and embedded-NUL pathnames. Recorded file operations exercise
+the controlled filesystem sandbox separately. Public `FileInfo` adaptation
+remains defined in `doc/java-file-compatibility.md`.
 
 Each record includes the generator ID/version, seed, generation runtime,
 limits, and the **actual operations and exact value tokens**. An explicit
@@ -184,6 +207,13 @@ A broader, still bounded local exploration can use `--count 100
 part of hosted workflow registration, the process-free unit tier, or default
 test discovery. All live examples here are opt-in local commands. No workflow,
 schedule, runner matrix, or package/generation gate is added.
+
+A deterministic file-only sample is selected explicitly and remains local:
+
+```sh
+DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M \
+  -m dripsharp.differential-campaign --family file --seed 1 --count 10
+```
 
 Each campaign builds its fixed Java and .NET runners once, with the current
 Java 17/net10.0 contracts, then reuses that pair only within the campaign. It

@@ -1,5 +1,9 @@
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.StringReader;
 import java.math.RoundingMode;
 import java.net.URI;
@@ -8,6 +12,7 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.text.DecimalFormat;
@@ -70,6 +75,43 @@ public final class JavaCompatOracle {
     throw new IllegalArgumentException("Invalid case value: " + token);
   }
 
+  private static String stringToken(String value) {
+    if (value == null) return "n:";
+    var token = new StringBuilder("u:");
+    for (int i = 0; i < value.length(); i++)
+      token.append(String.format(Locale.ROOT, "%04x", (int)value.charAt(i)));
+    return token.toString();
+  }
+
+  private static String fileInspection(File file) {
+    return String.join("\u0001",
+        file.getPath(), file.getName(), file.getParent() == null ? "\u0002" : file.getParent(),
+        Boolean.toString(file.isAbsolute()), Boolean.toString(file.exists()),
+        Boolean.toString(file.isFile()), Boolean.toString(file.isDirectory()),
+        Boolean.toString(file.canRead()), Boolean.toString(file.canWrite()),
+        Boolean.toString(file.isHidden()), file.isFile() ? Long.toString(file.length()) : "\u0002",
+        Integer.toString(file.hashCode()));
+  }
+
+  private static Path fileCaseRoot(Path input, String caseId) throws IOException {
+    var root = input.toAbsolutePath().getParent().resolve("file-sandboxes").resolve(caseId);
+    Files.createDirectories(root.resolve("dir"));
+    Files.createDirectories(root.resolve("empty-dir"));
+    Files.createDirectories(root.resolve("unicode-\u00e9"));
+    Files.createDirectories(root.resolve(".hidden"));
+    Files.writeString(root.resolve("file.txt"), "abc", StandardCharsets.UTF_8);
+    Files.writeString(root.resolve("unicode-\u00e9").resolve("\u96ea.txt"), "snow", StandardCharsets.UTF_8);
+    return root;
+  }
+
+  private static void deleteTree(Path root) throws IOException {
+    if (!Files.exists(root)) return;
+    try (var paths = Files.walk(root)) {
+      for (var path : paths.sorted(Comparator.reverseOrder()).toList())
+        Files.delete(path);
+    }
+  }
+
   private static void runCases(Path input, Path output) throws Exception {
     var lines = Files.readAllLines(input, StandardCharsets.UTF_8);
     if (lines.size() < 2 || !lines.get(0).equals("DRIPSHARP_DIFFERENTIAL_CASES_V1"))
@@ -78,7 +120,10 @@ public final class JavaCompatOracle {
     results.add("DRIPSHARP_DIFFERENTIAL_CASE_RESULTS_V1");
     var buffers = new java.util.HashMap<String, ByteBuffer>();
     var identities = new java.util.HashSet<String>();
-    for (var line : lines.subList(1, lines.size())) {
+    var sandboxParent = input.toAbsolutePath().getParent().resolve("file-sandboxes");
+    deleteTree(sandboxParent);
+    try {
+      for (var line : lines.subList(1, lines.size())) {
       var fields = line.split("\t", -1);
       if (fields.length < 5) throw new IllegalArgumentException("Malformed case");
       for (int i = 0; i < 5; i++)
@@ -91,38 +136,78 @@ public final class JavaCompatOracle {
       int arity = switch (operation) {
         case "byte-buffer/wrap", "string/hash", "long/hash" -> 1;
         case "byte-buffer/get", "byte-buffer/get-int" -> 0;
+        case "file/inspect", "file/absolute", "file/uri", "file/to-path",
+             "file/create", "file/delete", "file/open", "file/list-count" -> 1;
+        case "file/parent-child", "file/file-parent-child", "file/equals" -> 2;
         default -> throw new IllegalArgumentException("Unknown operation: " + operation);
       };
       if (fields.length != 5 + arity)
         throw new IllegalArgumentException("Wrong argument count");
-      Object value = arity == 0 ? null : caseValue(fields[5]);
+      var values = new Object[arity];
+      for (int i = 0; i < arity; i++) values[i] = caseValue(fields[5 + i]);
       // Domain validation occurs outside the observed operation's exception boundary.
-      if (operation.equals("byte-buffer/wrap") && value != null && !(value instanceof byte[])
-          || operation.equals("string/hash") && value != null && !(value instanceof String)
-          || operation.equals("long/hash") && !(value instanceof java.math.BigInteger))
+      if (operation.equals("byte-buffer/wrap") && values[0] != null && !(values[0] instanceof byte[])
+          || operation.equals("string/hash") && values[0] != null && !(values[0] instanceof String)
+          || operation.equals("long/hash") && !(values[0] instanceof java.math.BigInteger)
+          || operation.startsWith("file/") && java.util.Arrays.stream(values)
+              .anyMatch(value -> value != null && !(value instanceof String)))
         throw new IllegalArgumentException("Wrong argument type");
       long number = operation.equals("long/hash")
-          ? ((java.math.BigInteger)value).longValueExact() : 0;
+          ? ((java.math.BigInteger)values[0]).longValueExact() : 0;
+      Path caseRoot = operation.startsWith("file/") ? fileCaseRoot(input, fields[1]) : null;
+      for (int i = 0; i < values.length; i++)
+        if (values[i] instanceof String text)
+          values[i] = text.replace("$ROOT", caseRoot == null ? "$ROOT" : caseRoot.toString());
       var result = "n:";
       var exception = "none";
       try {
         switch (operation) {
-          case "byte-buffer/wrap" -> buffers.put(key, ByteBuffer.wrap((byte[])value));
+          case "byte-buffer/wrap" -> buffers.put(key, ByteBuffer.wrap((byte[])values[0]));
           case "byte-buffer/get" -> result = "i:" + buffers.get(key).get();
           case "byte-buffer/get-int" -> result = "i:" + buffers.get(key).getInt();
-          case "string/hash" -> result = "i:" + ((String)value).hashCode();
+          case "string/hash" -> result = "i:" + ((String)values[0]).hashCode();
           case "long/hash" -> result = "i:" + Long.hashCode(number);
+          case "file/inspect" -> result = stringToken(fileInspection(new File((String)values[0])));
+          case "file/absolute" -> result = stringToken(new File((String)values[0]).getAbsolutePath());
+          case "file/parent-child" -> result = stringToken(new File((String)values[0], (String)values[1]).getPath());
+          case "file/file-parent-child" -> result = stringToken(new File(
+              values[0] == null ? null : new File((String)values[0]), (String)values[1]).getPath());
+          case "file/uri" -> result = stringToken(new File(new URI((String)values[0])).getPath());
+          case "file/equals" -> result = "i:" + (new File((String)values[0]).equals(new File((String)values[1])) ? 1 : 0);
+          case "file/to-path" -> result = stringToken(new File((String)values[0]).toPath().toString());
+          case "file/create" -> result = "i:" + (new File((String)values[0]).createNewFile() ? 1 : 0);
+          case "file/delete" -> result = "i:" + (new File((String)values[0]).delete() ? 1 : 0);
+          case "file/open" -> {
+            try (var stream = new FileInputStream(new File((String)values[0]))) {
+              result = "i:" + stream.read();
+            }
+          }
+          case "file/list-count" -> {
+            var children = new File((String)values[0]).listFiles();
+            result = children == null ? "n:" : "i:" + children.length;
+          }
           default -> throw new AssertionError(operation);
         }
       } catch (NullPointerException error) {
         exception = "null-pointer";
       } catch (java.nio.BufferUnderflowException error) {
         exception = "buffer-underflow";
+      } catch (InvalidPathException error) {
+        exception = "invalid-path";
+      } catch (FileNotFoundException error) {
+        exception = "file-not-found";
+      } catch (IllegalArgumentException error) {
+        exception = "illegal-argument";
+      } catch (IOException error) {
+        exception = "io";
       }
       var buffer = buffers.get(key);
       var state = buffer == null ? "n:" : "i:" + buffer.position();
       results.add(String.join("\t", fields[0], fields[1], fields[2], fields[3],
           exception, result, state));
+      }
+    } finally {
+      deleteTree(sandboxParent);
     }
     Files.writeString(output, String.join("\n", results) + "\n", StandardCharsets.UTF_8);
   }

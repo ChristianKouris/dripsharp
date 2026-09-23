@@ -15,9 +15,10 @@
         execution (fn [text] {:status :ok :observations text})
         compare-probe #(cases/compare-executions rows (execution oracle) %)]
     (is (= :passed (:status summary)))
-    (is (= 17 (:matched summary)))
-    (is (= 10 (:cases summary)))
-    (is (= {:status :passed :matched 17} (compare-probe (execution probe))))
+    (is (= 68 (:matched summary)))
+    (is (= 17 (:cases summary)))
+    (is (= {:status :passed :matched 68} (compare-probe (execution probe))))
+    (is (not (paths/exists? (paths/resolve-path directory "file-sandboxes"))))
     (doseq [changed [(str/replace probe "i:-2147417597" "i:0")
                      (str/replace probe "buffer-underflow" "null-pointer")
                      (str/replace probe "get-int\tnone" "get-int\tbuffer-underflow")
