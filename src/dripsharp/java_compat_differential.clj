@@ -406,12 +406,43 @@
 
 (def case-families
   "Local-only concrete operation contracts. Registration launches no processes."
-  {"byte-buffer" {"wrap" {:arguments [#{"b" "n"}]
-                          :exceptions #{"none" "null-pointer"}}
-                  "get" {:arguments []
-                         :exceptions #{"none" "null-pointer" "buffer-underflow"}}
-                  "get-int" {:arguments []
-                             :exceptions #{"none" "null-pointer" "buffer-underflow"}}}
+  {"byte-buffer"
+   (merge
+    {"wrap" {:arguments [#{"b" "n"}] :exceptions #{"none" "null-pointer"}}
+     "select" {:arguments [#{"u"}] :exceptions #{"none" "null-pointer" "illegal-argument"}}
+     "order" {:arguments [#{"u"}] :exceptions #{"none" "null-pointer"}}
+     "set-position" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "illegal-argument"}}
+     "set-limit" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "illegal-argument"}}
+     "get-at" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "index-out-of-bounds"}}
+     "get-short-at" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "index-out-of-bounds"}}
+     "get-int-at" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "index-out-of-bounds"}}
+     "get-long-at" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "index-out-of-bounds"}}
+     "put" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "buffer-overflow" "read-only"}}
+     "put-short" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "buffer-overflow" "read-only"}}
+     "put-int" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "buffer-overflow" "read-only"}}
+     "put-long" {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "buffer-overflow" "read-only"}}}
+    (into {} (for [operation ["capacity" "position" "limit" "remaining" "is-read-only"
+                              "mark" "clear" "flip" "rewind" "duplicate" "slice" "read-only"]]
+               [operation {:arguments [] :exceptions #{"none" "null-pointer"}}]))
+    {"reset" {:arguments [] :exceptions #{"none" "null-pointer" "invalid-mark"}}}
+    (into {} (for [operation ["get" "get-short" "get-int" "get-long"]]
+               [operation {:arguments [] :exceptions #{"none" "null-pointer" "buffer-underflow"}}]))
+    (into {} (for [operation ["put-at" "put-short-at" "put-int-at" "put-long-at"]]
+               [operation {:arguments [#{"i"} #{"i"}]
+                           :exceptions #{"none" "null-pointer" "index-out-of-bounds" "read-only"}}])))
+   "binary-data"
+   (merge
+    {"open" {:arguments [#{"b"}] :exceptions #{"none"}}
+     "read-fully" {:arguments [#{"b"} #{"i"} #{"i"}]
+                   :exceptions #{"none" "null-pointer" "index-out-of-bounds" "eof"}}
+     "write-buffer" {:arguments [#{"b"} #{"i"} #{"i"}]
+                     :exceptions #{"none" "null-pointer" "index-out-of-bounds" "io"}}
+     "flush" {:arguments [] :exceptions #{"none" "null-pointer" "io"}}}
+    (into {} (for [operation ["read-byte" "read-unsigned-byte" "read-short"
+                              "read-unsigned-short" "read-int" "read-long"]]
+               [operation {:arguments [] :exceptions #{"none" "null-pointer" "eof"}}]))
+    (into {} (for [operation ["write-byte" "write-short" "write-int" "write-long"]]
+               [operation {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "io"}}])))
    "string" {"hash" {:arguments [#{"u" "n"}]
                      :exceptions #{"none" "null-pointer"}}}
    "long" {"hash" {:arguments [#{"i"}] :exceptions #{"none"}}}

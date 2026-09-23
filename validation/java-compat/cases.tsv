@@ -10,6 +10,71 @@ byte-buffer	short	2	get	none
 byte-buffer	empty	0	wrap	none	b:
 byte-buffer	empty	1	get	buffer-underflow
 byte-buffer	null	0	wrap	null-pointer	n:
+byte-buffer	state-and-alias	0	wrap	none	b:000102030405060708090a0b
+byte-buffer	state-and-alias	1	capacity	none
+byte-buffer	state-and-alias	2	limit	none
+byte-buffer	state-and-alias	3	position	none
+byte-buffer	state-and-alias	4	set-position	none	i:2
+byte-buffer	state-and-alias	5	mark	none
+byte-buffer	state-and-alias	6	set-position	none	i:4
+byte-buffer	state-and-alias	7	reset	none
+byte-buffer	state-and-alias	8	order	none	u:006c006900740074006c0065
+byte-buffer	state-and-alias	9	get-short	none
+byte-buffer	state-and-alias	10	slice	none
+byte-buffer	state-and-alias	11	put	none	i:128
+byte-buffer	state-and-alias	12	select	none	u:0072006f006f0074
+byte-buffer	state-and-alias	13	get-at	none	i:4
+byte-buffer	state-and-alias	14	duplicate	none
+byte-buffer	state-and-alias	15	set-position	none	i:5
+byte-buffer	state-and-alias	16	select	none	u:0072006f006f0074
+byte-buffer	state-and-alias	17	position	none
+byte-buffer	state-and-alias	18	read-only	none
+byte-buffer	state-and-alias	19	put	read-only	i:1
+byte-buffer	state-and-alias	20	select	none	u:0072006f006f0074
+byte-buffer	state-and-alias	21	set-limit	none	i:4
+byte-buffer	state-and-alias	22	put	buffer-overflow	i:1
+byte-buffer	state-and-alias	23	get	buffer-underflow
+byte-buffer	state-and-alias	24	flip	none
+byte-buffer	state-and-alias	25	get-int	none
+byte-buffer	state-and-alias	26	clear	none
+byte-buffer	state-and-alias	27	put-long	none	i:-9223372036854775808
+byte-buffer	state-and-alias	28	rewind	none
+byte-buffer	state-and-alias	29	get-long	none
+byte-buffer	mark-and-bounds	0	wrap	none	b:01020304
+byte-buffer	mark-and-bounds	1	reset	invalid-mark
+byte-buffer	mark-and-bounds	2	mark	none
+byte-buffer	mark-and-bounds	3	set-position	none	i:2
+byte-buffer	mark-and-bounds	4	rewind	none
+byte-buffer	mark-and-bounds	5	reset	invalid-mark
+byte-buffer	mark-and-bounds	6	get-int-at	index-out-of-bounds	i:1
+byte-buffer	mark-and-bounds	7	set-limit	illegal-argument	i:5
+byte-buffer	mark-and-bounds	8	set-position	illegal-argument	i:5
+byte-buffer	endian	0	wrap	none	b:0102030405060708
+byte-buffer	endian	1	get-int	none
+byte-buffer	endian	2	rewind	none
+byte-buffer	endian	3	order	none	u:006c006900740074006c0065
+byte-buffer	endian	4	get-int	none
+byte-buffer	endian	5	put-int-at	none	i:4	i:-2147483648
+byte-buffer	endian	6	get-int-at	none	i:4
+binary-data	primitives	0	open	none	b:80ff010203040506
+binary-data	primitives	1	read-byte	none
+binary-data	primitives	2	read-unsigned-byte	none
+binary-data	primitives	3	read-short	none
+binary-data	primitives	4	read-int	none
+binary-data	primitives	5	read-byte	eof
+binary-data	partial-eof	0	open	none	b:010203
+binary-data	partial-eof	1	read-int	eof
+binary-data	read-fully	0	open	none	b:010203
+binary-data	read-fully	1	read-fully	none	b:aaaaaaaa	i:1	i:3
+binary-data	read-fully	2	open	none	b:010203
+binary-data	read-fully	3	read-fully	eof	b:aaaaaaaa	i:0	i:4
+binary-data	output	0	open	none	b:
+binary-data	output	1	write-byte	none	i:128
+binary-data	output	2	write-short	none	i:-32768
+binary-data	output	3	write-int	none	i:-2147483648
+binary-data	output	4	write-long	none	i:-9223372036854775808
+binary-data	output	5	write-buffer	none	b:0102ff	i:0	i:3
+binary-data	output	6	flush	none
 string	empty	0	hash	none	u:
 string	null	0	hash	null-pointer	n:
 string	code-units	0	hash	none	u:00000009d8000061dc00ffff

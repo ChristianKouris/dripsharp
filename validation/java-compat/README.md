@@ -123,9 +123,8 @@ The initial operations are:
 
 | Family | Operation | Arguments | Result and state |
 | --- | --- | --- | --- |
-| `byte-buffer` | `wrap` | bytes or null | Void; cursor, or absent if construction failed |
-| `byte-buffer` | `get` | none | Signed byte; cursor after the operation |
-| `byte-buffer` | `get-int` | none | Signed big-endian 32-bit integer; cursor after the operation |
+| `byte-buffer` | construction, cursor/limit, mark/reset, clear/flip/rewind, view, order, relative/absolute get/put operations | exact bytes, integers, view state, and exceptions | Backing bytes plus each view's position, limit, capacity, remaining count, order, and read-only flag |
+| `binary-data` | `open`, primitive reads/writes, `read-fully`, `write-buffer`, `flush` | exact bytes and signed/unsigned integers | Input cursor, exact output bytes, and the complete sentinel buffer |
 | `string` | `hash` | UTF-16 string or null | JDK/JavaCompat string hash; absent state |
 | `long` | `hash` | signed 64-bit integer | JDK/JavaCompat long hash; absent state |
 | `file` | `inspect` | pathname or null | Lexical path/name/parent, predicates, regular-file length, and hash; absent state |
@@ -156,9 +155,13 @@ results are unsigned `int` values while sentinel buffers retain signed storage
 as exact byte tokens. `eof`, `index-out-of-bounds`, and `io` remain distinct.
 
 A buffer case begins without a buffer; reads before a successful wrap therefore
-observe a null reference. A failed wrap preserves any previous buffer. Exceptions
-are observed at each operation and execution continues. Semantic categories
-include `none`, `null-pointer`, `buffer-underflow`, `invalid-path`,
+observe a null reference. A failed wrap preserves any previous buffer. Slice,
+duplicate, and read-only views share backing bytes while the trace retains each
+view's independent cursor and bounds. Failed operations are followed by the same
+state observation, so cursor movement on underflow, overflow, invalid mark, and
+read-only writes is compared directly. Exceptions are observed at each operation
+and execution continues. Semantic categories include `none`, `null-pointer`,
+`buffer-underflow`, `buffer-overflow`, `read-only`, `invalid-mark`, `invalid-path`,
 `illegal-argument`, `file-not-found`, and `io`. The independent adapters map
 only the relevant JDK/.NET exception classes to these categories; unexpected
 exceptions escape as process failures. No exception text is compared.
@@ -254,13 +257,18 @@ DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M \
   --shrink-attempts 100 --shrink-ms 30000
 ```
 
-Stateful I/O exploration uses the same replay and shrink path, for example:
+Stateful I/O and binary-buffer exploration use the same replay and shrink path,
+for example:
 
 ```sh
 DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M \
   -m dripsharp.differential-campaign --family filter-input --seed 4 --count 10
 DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M \
   -m dripsharp.differential-campaign --family random-access --seed 0 --count 10
+DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M \
+  -m dripsharp.differential-campaign --family byte-buffer --seed 23 --count 10
+DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M \
+  -m dripsharp.differential-campaign --family binary-data --seed 23 --count 10
 ```
 
 Each campaign builds its fixed Java and .NET runners once, with the current
@@ -342,3 +350,21 @@ DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M:test \
 The live file intentionally lacks the `_test.clj` suffix. The process-free
 checks are deterministic and small; registration alone never launches a live
 campaign. Bounded samples do not establish complete Java or PdfCarton equivalence.
+
+## Translated binary template
+
+The explicit `binary` microprogram complements the direct helper differential.
+It translates authored Java that parses shared bytes through ordered ByteBuffer
+views and round-trips primitive widths through DataOutputStream/DataInputStream.
+The trace retains encoded bytes and independent root/slice/duplicate positions.
+Each snapshot records the concrete source, exact inputs, generator version and
+seed, and the ordinary microprogram snapshot provides exact replay.
+
+```sh
+DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M \
+  -m dripsharp.binary-microprogram --seed 23 --samples 12
+```
+
+Focused deterministic replay without generated samples is available with
+`--samples 0 --case parse-little`. This remains an explicit local workload and
+is not registered in hosted or default test discovery.

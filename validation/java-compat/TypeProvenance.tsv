@@ -21,6 +21,7 @@ JavaBiPredicate	java.util.function.BiPredicate	pdfcube,pkl,rawhttp,sqltrellis	ty
 JavaBitSet	java.util.BitSet	pdfcube,pkl,rawhttp,sqltrellis	behavior/bit-set,type-contract/JavaBitSet
 JavaByteArrayOutputStream	java.io.ByteArrayOutputStream	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaByteArrayOutputStream
 JavaByteBuffer	java.nio.ByteBuffer	pdfcube,pkl,rawhttp,sqltrellis	behavior/byte-buffer,behavior/charset-malformed,type-contract/JavaByteBuffer
+JavaByteOrder	java.nio.ByteOrder	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaByteOrder
 JavaCancellation	java.util.concurrent.CancellationException	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaCancellation
 JavaCancellationException	java.util.concurrent.CancellationException	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaCancellationException
 JavaCertificateFactory	java.security.cert.CertificateFactory	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaCertificateFactory
@@ -32,6 +33,7 @@ JavaCodingErrorAction	java.nio.charset.CodingErrorAction	pdfcube,pkl,rawhttp,sql
 JavaCollector	java.util.stream.Collector	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaCollector
 JavaCompat	java.lang.System	pdfcube,pkl,rawhttp,sqltrellis	behavior/collections,behavior/regex,behavior/signed-byte-or,behavior/string-identity,behavior/uri,type-contract/JavaCompat
 JavaCrc32	java.util.zip.CRC32	pdfcube,pkl,rawhttp,sqltrellis	behavior/crc32,type-contract/JavaCrc32
+JavaDataInputStream	java.io.DataInputStream	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaDataInputStream
 JavaDataOutputStream	java.io.DataOutputStream	pdfcube,pkl,rawhttp,sqltrellis	behavior/data-output,type-contract/JavaDataOutputStream
 JavaDatabaseMetaData	java.sql.DatabaseMetaData	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaDatabaseMetaData
 JavaDateTimeFormatter	java.time.format.DateTimeFormatter	pdfcube,pkl,rawhttp,sqltrellis	behavior/time-format,type-contract/JavaDateTimeFormatter

@@ -41,7 +41,13 @@
        "--replay" "CASE.edn" "--max-processes" "20" "--max-ms" "180000"
        "--shrink-attempts" "0" "--shrink-ms" "1000"]}
      :translated-microprograms
-     {:families {"numeric" {:execution :explicit-local-only
+     {:families {"binary" {:execution :explicit-local-only
+                            :generator {:id :binary-templates :version 1}
+                            :command ["clojure" "-J-Xmx28g" "-M" "-m" "dripsharp.binary-microprogram"
+                                      "--seed" "23" "--samples" "12"]
+                            :regression-command ["clojure" "-J-Xmx28g" "-M" "-m" "dripsharp.binary-microprogram"
+                                                 "--samples" "0" "--case" "parse-little"]}
+                 "numeric" {:execution :explicit-local-only
                             :generator {:id :numeric-templates :version 1}
                             :command ["clojure" "-J-Xmx28g" "-M" "-m" "dripsharp.numeric-microprogram"
                                       "--seed" "13" "--samples" "32"]

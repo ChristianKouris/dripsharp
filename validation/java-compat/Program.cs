@@ -172,6 +172,46 @@ internal static class Program
         internal bool Closed { get; set; }
     }
 
+    private sealed class BufferCase : IDisposable
+    {
+        internal BufferCase(sbyte[] bytes)
+        {
+            Bytes = bytes;
+            Views["root"] = JavaByteBuffer.wrap(bytes);
+        }
+        internal sbyte[] Bytes { get; }
+        internal Dictionary<string, JavaByteBuffer> Views { get; } = new(StringComparer.Ordinal);
+        internal string ActiveName { get; set; } = "root";
+        internal JavaByteBuffer Active => Views[ActiveName];
+        public void Dispose()
+        {
+            foreach (var view in Views.Values) view.Dispose();
+        }
+    }
+
+    private sealed class DataCase : IDisposable
+    {
+        internal DataCase(sbyte[] bytes)
+        {
+            InputBytes = bytes;
+            InputStream = JavaCompat.NewMemoryStream(bytes, 0, bytes.Length);
+            Input = new JavaDataInputStream(InputStream);
+            OutputStream = new JavaByteArrayOutputStream();
+            Output = new JavaDataOutputStream(OutputStream);
+        }
+        internal sbyte[] InputBytes { get; }
+        internal MemoryStream InputStream { get; }
+        internal JavaDataInputStream Input { get; }
+        internal JavaByteArrayOutputStream OutputStream { get; }
+        internal JavaDataOutputStream Output { get; }
+        internal sbyte[]? LastBuffer { get; set; }
+        public void Dispose()
+        {
+            Input.Dispose();
+            Output.Dispose();
+        }
+    }
+
     private static int Main(string[] arguments)
     {
         try
@@ -284,6 +324,26 @@ internal static class Program
         return StringToken(string.Join("|", pointer, bytes.Length, Hex(bytes), buffer));
     }
 
+    private static string BufferState(BufferCase? buffer)
+    {
+        if (buffer is null) return "n:";
+        var views = buffer.Views.OrderBy(entry => entry.Key, StringComparer.Ordinal)
+            .Select(entry => string.Join(",", entry.Key, entry.Value.position(), entry.Value.limit(),
+                entry.Value.capacity(), entry.Value.remaining(),
+                entry.Value.order() == JavaByteOrder.BigEndian ? "big" : "little",
+                entry.Value.isReadOnly().ToString().ToLowerInvariant()));
+        return StringToken(string.Join("|", Hex(buffer.Bytes), buffer.ActiveName,
+            string.Join(";", views)));
+    }
+
+    private static string DataState(DataCase? data)
+    {
+        if (data is null) return "n:";
+        var output = data.OutputStream.ToArray();
+        return StringToken(string.Join("|", data.InputStream.Position, data.InputBytes.Length,
+            Hex(output), data.LastBuffer is null ? "-" : Hex(data.LastBuffer)));
+    }
+
     private static string FileInspection(JavaFile file) => string.Join("\u0001",
         file.Pathname, file.Name, file.Parent ?? "\u0002",
         file.IsAbsolute.ToString().ToLowerInvariant(), file.Exists.ToString().ToLowerInvariant(),
@@ -313,7 +373,8 @@ internal static class Program
         if (lines.Length < 2 || lines[0] != "DRIPSHARP_DIFFERENTIAL_CASES_V1")
             throw new InvalidDataException("Invalid cases header or empty input");
         var results = new List<string> { "DRIPSHARP_DIFFERENTIAL_CASE_RESULTS_V1" };
-        var buffers = new Dictionary<string, JavaByteBuffer>();
+        var buffers = new Dictionary<string, BufferCase>();
+        var dataCases = new Dictionary<string, DataCase>();
         var inputs = new Dictionary<string, InputCase>();
         var outputs = new Dictionary<string, OutputCase>();
         var randoms = new Dictionary<string, RandomCase>();
@@ -337,7 +398,26 @@ internal static class Program
                 {
                     "numeric/int-div" or "numeric/int-rem" or "numeric/long-div" or "numeric/long-rem" => 2,
                     "byte-buffer/wrap" or "string/hash" or "long/hash" => 1,
-                    "byte-buffer/get" or "byte-buffer/get-int" => 0,
+                    "byte-buffer/capacity" or "byte-buffer/position" or "byte-buffer/limit" or
+                    "byte-buffer/remaining" or "byte-buffer/is-read-only" or
+                    "byte-buffer/mark" or "byte-buffer/reset" or "byte-buffer/clear" or
+                    "byte-buffer/flip" or "byte-buffer/rewind" or "byte-buffer/duplicate" or
+                    "byte-buffer/slice" or "byte-buffer/read-only" or "byte-buffer/get" or
+                    "byte-buffer/get-short" or "byte-buffer/get-int" or "byte-buffer/get-long" => 0,
+                    "byte-buffer/set-position" or "byte-buffer/set-limit" or "byte-buffer/select" or
+                    "byte-buffer/order" or "byte-buffer/get-at" or "byte-buffer/get-short-at" or
+                    "byte-buffer/get-int-at" or "byte-buffer/get-long-at" or "byte-buffer/put" or
+                    "byte-buffer/put-short" or "byte-buffer/put-int" or "byte-buffer/put-long" => 1,
+                    "byte-buffer/put-at" or "byte-buffer/put-short-at" or
+                    "byte-buffer/put-int-at" or "byte-buffer/put-long-at" => 2,
+                    "binary-data/open" => 1,
+                    "binary-data/read-byte" or "binary-data/read-unsigned-byte" or
+                    "binary-data/read-short" or "binary-data/read-unsigned-short" or
+                    "binary-data/read-int" or "binary-data/read-long" or
+                    "binary-data/flush" => 0,
+                    "binary-data/write-byte" or "binary-data/write-short" or
+                    "binary-data/write-int" or "binary-data/write-long" => 1,
+                    "binary-data/read-fully" or "binary-data/write-buffer" => 3,
                     "byte-array-input/open" => 3,
                     "filter-input/open" => 3,
                     "byte-array-input/read-buffer" or "filter-input/read-buffer" => 3,
@@ -371,6 +451,7 @@ internal static class Program
                     throw new InvalidDataException("Wrong argument count");
                 var values = fields.Skip(5).Select(CaseValue).ToArray();
                 if (operation == "byte-buffer/wrap" && values[0] is not null and not sbyte[] ||
+                    operation == "binary-data/open" && values[0] is not sbyte[] ||
                     operation == "string/hash" && values[0] is not null and not string ||
                     operation == "long/hash" && values[0] is not System.Numerics.BigInteger ||
                     operation is "byte-array-input/open" or "filter-input/open" &&
@@ -389,6 +470,7 @@ internal static class Program
                 var result = "n:";
                 var exception = "none";
                 buffers.TryGetValue(key, out var buffer);
+                dataCases.TryGetValue(key, out var dataCase);
                 inputs.TryGetValue(key, out var inputCase);
                 outputs.TryGetValue(key, out var outputCase);
                 randoms.TryGetValue(key, out var randomCase);
@@ -401,12 +483,64 @@ internal static class Program
                         case "numeric/long-div": result = "i:" + JavaCompat.IntegralDivide(numericLeft, numericRight).ToString(CultureInfo.InvariantCulture); break;
                         case "numeric/long-rem": result = "i:" + JavaCompat.IntegralRemainder(numericLeft, numericRight).ToString(CultureInfo.InvariantCulture); break;
                         case "byte-buffer/wrap":
-                            var replacement = JavaByteBuffer.wrap((sbyte[])values[0]!);
+                            var replacement = new BufferCase((sbyte[])values[0]!);
                             buffer?.Dispose();
                             buffers[key] = buffer = replacement;
                             break;
-                        case "byte-buffer/get": result = "i:" + buffer!.get().ToString(CultureInfo.InvariantCulture); break;
-                        case "byte-buffer/get-int": result = "i:" + buffer!.getInt().ToString(CultureInfo.InvariantCulture); break;
+                        case "byte-buffer/capacity": result = "i:" + buffer!.Active.capacity(); break;
+                        case "byte-buffer/position": result = "i:" + buffer!.Active.position(); break;
+                        case "byte-buffer/limit": result = "i:" + buffer!.Active.limit(); break;
+                        case "byte-buffer/remaining": result = "i:" + buffer!.Active.remaining(); break;
+                        case "byte-buffer/is-read-only": result = "i:" + (buffer!.Active.isReadOnly() ? 1 : 0); break;
+                        case "byte-buffer/set-position": buffer!.Active.position(IntValue(values[0])); result = "i:1"; break;
+                        case "byte-buffer/set-limit": buffer!.Active.limit(IntValue(values[0])); result = "i:1"; break;
+                        case "byte-buffer/mark": buffer!.Active.mark(); result = "i:1"; break;
+                        case "byte-buffer/reset": buffer!.Active.reset(); result = "i:1"; break;
+                        case "byte-buffer/clear": buffer!.Active.clear(); result = "i:1"; break;
+                        case "byte-buffer/flip": buffer!.Active.flip(); result = "i:1"; break;
+                        case "byte-buffer/rewind": buffer!.Active.rewind(); result = "i:1"; break;
+                        case "byte-buffer/duplicate": buffer!.Views["view"] = buffer.Active.duplicate(); buffer.ActiveName = "view"; result = "i:1"; break;
+                        case "byte-buffer/slice": buffer!.Views["view"] = buffer.Active.slice(); buffer.ActiveName = "view"; result = "i:1"; break;
+                        case "byte-buffer/read-only": buffer!.Views["view"] = buffer.Active.asReadOnlyBuffer(); buffer.ActiveName = "view"; result = "i:1"; break;
+                        case "byte-buffer/select": buffer!.ActiveName = (string)values[0]!; _ = buffer.Active; break;
+                        case "byte-buffer/order": buffer!.Active.order((string)values[0]! == "big" ? JavaByteOrder.BigEndian : JavaByteOrder.LittleEndian); result = "i:1"; break;
+                        case "byte-buffer/get": result = "i:" + buffer!.Active.get(); break;
+                        case "byte-buffer/get-at": result = "i:" + buffer!.Active.get(IntValue(values[0])); break;
+                        case "byte-buffer/get-short": result = "i:" + buffer!.Active.getShort(); break;
+                        case "byte-buffer/get-short-at": result = "i:" + buffer!.Active.getShort(IntValue(values[0])); break;
+                        case "byte-buffer/get-int": result = "i:" + buffer!.Active.getInt(); break;
+                        case "byte-buffer/get-int-at": result = "i:" + buffer!.Active.getInt(IntValue(values[0])); break;
+                        case "byte-buffer/get-long": result = "i:" + buffer!.Active.getLong(); break;
+                        case "byte-buffer/get-long-at": result = "i:" + buffer!.Active.getLong(IntValue(values[0])); break;
+                        case "byte-buffer/put": buffer!.Active.put(unchecked((sbyte)IntValue(values[0]))); result = "i:1"; break;
+                        case "byte-buffer/put-at": buffer!.Active.put(IntValue(values[0]), unchecked((sbyte)IntValue(values[1]))); result = "i:1"; break;
+                        case "byte-buffer/put-short": buffer!.Active.putShort(unchecked((short)IntValue(values[0]))); result = "i:1"; break;
+                        case "byte-buffer/put-short-at": buffer!.Active.putShort(IntValue(values[0]), unchecked((short)IntValue(values[1]))); result = "i:1"; break;
+                        case "byte-buffer/put-int": buffer!.Active.putInt(IntValue(values[0])); result = "i:1"; break;
+                        case "byte-buffer/put-int-at": buffer!.Active.putInt(IntValue(values[0]), IntValue(values[1])); result = "i:1"; break;
+                        case "byte-buffer/put-long": buffer!.Active.putLong(LongValue(values[0])); result = "i:1"; break;
+                        case "byte-buffer/put-long-at": buffer!.Active.putLong(IntValue(values[0]), LongValue(values[1])); result = "i:1"; break;
+                        case "binary-data/open":
+                            dataCase?.Dispose();
+                            dataCases[key] = dataCase = new DataCase((sbyte[])values[0]!);
+                            break;
+                        case "binary-data/read-byte": result = "i:" + dataCase!.Input.readByte(); break;
+                        case "binary-data/read-unsigned-byte": result = "i:" + dataCase!.Input.readUnsignedByte(); break;
+                        case "binary-data/read-short": result = "i:" + dataCase!.Input.readShort(); break;
+                        case "binary-data/read-unsigned-short": result = "i:" + dataCase!.Input.readUnsignedShort(); break;
+                        case "binary-data/read-int": result = "i:" + dataCase!.Input.readInt(); break;
+                        case "binary-data/read-long": result = "i:" + dataCase!.Input.readLong(); break;
+                        case "binary-data/read-fully":
+                            dataCase!.LastBuffer = ((sbyte[])values[0]!).ToArray();
+                            dataCase.Input.readFully(dataCase.LastBuffer, IntValue(values[1]), IntValue(values[2]));
+                            result = StringToken(Hex(dataCase.LastBuffer));
+                            break;
+                        case "binary-data/write-byte": dataCase!.Output.writeByte(IntValue(values[0])); break;
+                        case "binary-data/write-short": dataCase!.Output.writeShort(IntValue(values[0])); break;
+                        case "binary-data/write-int": dataCase!.Output.writeInt(IntValue(values[0])); break;
+                        case "binary-data/write-long": dataCase!.Output.writeLong(LongValue(values[0])); break;
+                        case "binary-data/write-buffer": dataCase!.Output.write((sbyte[])values[0]!, IntValue(values[1]), IntValue(values[2])); break;
+                        case "binary-data/flush": dataCase!.Output.flush(); break;
                         case "byte-array-input/open":
                             inputCase?.Stream.Dispose();
                             inputs[key] = inputCase = new InputCase(JavaCompat.NewMemoryStream(
@@ -578,10 +712,12 @@ internal static class Program
                 catch (DivideByZeroException) { exception = "arithmetic"; }
                 catch (ArgumentNullException) { exception = "null-pointer"; }
                 catch (NullReferenceException) { exception = "null-pointer"; }
-                catch (EndOfStreamException) { exception = operation.StartsWith("random-access/", StringComparison.Ordinal) ? "eof" : "buffer-underflow"; }
+                catch (EndOfStreamException) { exception = operation.StartsWith("random-access/", StringComparison.Ordinal) || operation.StartsWith("binary-data/", StringComparison.Ordinal) ? "eof" : operation.StartsWith("byte-buffer/put", StringComparison.Ordinal) ? "buffer-overflow" : "buffer-underflow"; }
+                catch (InvalidOperationException) { exception = "invalid-mark"; }
+                catch (NotSupportedException) { exception = "read-only"; }
                 catch (FileNotFoundException) { exception = "file-not-found"; }
                 catch (IndexOutOfRangeException) { exception = "index-out-of-bounds"; }
-                catch (ArgumentOutOfRangeException) { exception = "index-out-of-bounds"; }
+                catch (ArgumentOutOfRangeException) { exception = operation is "byte-buffer/set-position" or "byte-buffer/set-limit" ? "illegal-argument" : "index-out-of-bounds"; }
                 catch (ArgumentException) { exception = operation == "file/to-path" ? "invalid-path" : "illegal-argument"; }
                 catch (IOException) { exception = "io"; }
                 var state = fields[0] switch
@@ -589,7 +725,9 @@ internal static class Program
                     "byte-array-input" or "filter-input" => InputState(inputCase),
                     "byte-array-output" or "filter-output" => OutputState(outputCase),
                     "random-access" => RandomState(randomCase),
-                    _ => buffer is null ? "n:" : "i:" + buffer.position().ToString(CultureInfo.InvariantCulture)
+                    "byte-buffer" => BufferState(buffer),
+                    "binary-data" => DataState(dataCase),
+                    _ => "n:"
                 };
                 results.Add(string.Join("\t", fields[0], fields[1], fields[2], fields[3],
                     exception, result, state));
@@ -599,6 +737,7 @@ internal static class Program
         finally
         {
             foreach (var buffer in buffers.Values) buffer.Dispose();
+            foreach (var data in dataCases.Values) data.Dispose();
             foreach (var stream in inputs.Values) stream.Stream.Dispose();
             foreach (var stream in outputs.Values) stream.Stream.Dispose();
             foreach (var random in randoms.Values) random.File.Dispose();

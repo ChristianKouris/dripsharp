@@ -60,6 +60,17 @@ internal
 #else
 public
 #endif
+enum JavaByteOrder
+{
+    BigEndian,
+    LittleEndian
+}
+
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
 sealed class JavaByteBuffer : IDisposable
 {
     private readonly sbyte[]? bytes;
@@ -67,32 +78,45 @@ sealed class JavaByteBuffer : IDisposable
     private readonly MemoryMappedViewAccessor? mappedView;
     private readonly bool ownsMapping;
     private readonly bool direct;
-    private readonly int capacity;
+    private readonly bool readOnly;
+    private readonly int storageOffset;
+    private readonly int bufferCapacity;
     private int cursor;
     private int upperBound;
     private int markedCursor = -1;
+    private JavaByteOrder byteOrder = JavaByteOrder.BigEndian;
     private bool disposed;
 
-    private JavaByteBuffer(sbyte[] bytes, bool direct = false)
+    private JavaByteBuffer(
+        sbyte[] bytes,
+        bool direct = false,
+        int storageOffset = 0,
+        int? viewCapacity = null,
+        bool readOnly = false)
     {
         this.bytes = bytes;
         this.direct = direct;
-        capacity = bytes.Length;
-        upperBound = capacity;
+        this.readOnly = readOnly;
+        this.storageOffset = storageOffset;
+        bufferCapacity = viewCapacity ?? bytes.Length;
+        upperBound = bufferCapacity;
     }
 
     private JavaByteBuffer(
         MemoryMappedFile mappedFile,
         MemoryMappedViewAccessor mappedView,
         int capacity,
-        bool ownsMapping)
+        bool ownsMapping,
+        int storageOffset = 0)
     {
         this.mappedFile = mappedFile;
         this.mappedView = mappedView;
-        this.capacity = capacity;
+        bufferCapacity = capacity;
         this.ownsMapping = ownsMapping;
+        this.storageOffset = storageOffset;
         direct = true;
-        upperBound = capacity;
+        readOnly = true;
+        upperBound = bufferCapacity;
     }
 
     internal static JavaByteBuffer Direct(sbyte[] bytes) => new(bytes, direct: true);
@@ -109,26 +133,53 @@ sealed class JavaByteBuffer : IDisposable
     public sbyte[] array()
     {
         ThrowIfDisposed();
-        if (direct || bytes is null)
-            throw new NotSupportedException("A direct Java byte buffer has no accessible array.");
+        if (direct || readOnly || bytes is null)
+            throw new NotSupportedException("This Java byte buffer has no accessible array.");
         return bytes;
+    }
+    public int capacity()
+    {
+        ThrowIfDisposed();
+        return bufferCapacity;
     }
     public JavaByteBuffer clear()
     {
         ThrowIfDisposed();
         cursor = 0;
-        upperBound = capacity;
+        upperBound = bufferCapacity;
+        markedCursor = -1;
         return this;
     }
     public JavaByteBuffer duplicate()
     {
         ThrowIfDisposed();
         var duplicate = mappedView is null
-            ? new JavaByteBuffer(bytes!, direct)
-            : new JavaByteBuffer(mappedFile!, mappedView, capacity, ownsMapping: false);
+            ? new JavaByteBuffer(bytes!, direct, storageOffset, bufferCapacity, readOnly)
+            : new JavaByteBuffer(mappedFile!, mappedView, bufferCapacity, ownsMapping: false, storageOffset);
         duplicate.cursor = cursor;
         duplicate.upperBound = upperBound;
+        duplicate.markedCursor = markedCursor;
         return duplicate;
+    }
+    public JavaByteBuffer slice()
+    {
+        ThrowIfDisposed();
+        var remaining = upperBound - cursor;
+        return mappedView is null
+            ? new JavaByteBuffer(bytes!, direct, storageOffset + cursor, remaining, readOnly)
+            : new JavaByteBuffer(mappedFile!, mappedView, remaining, ownsMapping: false,
+                storageOffset + cursor);
+    }
+    public JavaByteBuffer asReadOnlyBuffer()
+    {
+        ThrowIfDisposed();
+        var result = mappedView is null
+            ? new JavaByteBuffer(bytes!, direct, storageOffset, bufferCapacity, readOnly: true)
+            : new JavaByteBuffer(mappedFile!, mappedView, bufferCapacity, ownsMapping: false, storageOffset);
+        result.cursor = cursor;
+        result.upperBound = upperBound;
+        result.markedCursor = markedCursor;
+        return result;
     }
     public sbyte get()
     {
@@ -144,28 +195,29 @@ sealed class JavaByteBuffer : IDisposable
     }
     public int getInt()
     {
-        ThrowIfDisposed();
-        if (4 > upperBound - cursor) throw new EndOfStreamException();
-        uint value = 0;
-        for (var index = 0; index < 4; index++)
-            value = (value << 8) | unchecked((byte)get());
-        return unchecked((int)value);
+        var result = unchecked((int)ReadRelative(4));
+        return result;
     }
+    public int getInt(int index) => unchecked((int)ReadAbsolute(index, 4));
+    public short getShort() => unchecked((short)ReadRelative(2));
+    public short getShort(int index) => unchecked((short)ReadAbsolute(index, 2));
+    public long getLong() => unchecked((long)ReadRelative(8));
+    public long getLong(int index) => unchecked((long)ReadAbsolute(index, 8));
     public JavaByteBuffer get(sbyte[] destination, int offset, int length)
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(destination);
-        if (offset < 0 || length < 0 || offset + length > destination.Length)
+        if (offset < 0 || length < 0 || offset > destination.Length - length)
             throw new ArgumentOutOfRangeException();
         if (length > upperBound - cursor) throw new EndOfStreamException();
         if (mappedView is null)
         {
-            Array.Copy(bytes!, cursor, destination, offset, length);
+            Array.Copy(bytes!, storageOffset + cursor, destination, offset, length);
         }
         else
         {
             var unsigned = new byte[length];
-            var read = mappedView.ReadArray(cursor, unsigned, 0, length);
+            var read = mappedView.ReadArray(storageOffset + cursor, unsigned, 0, length);
             if (read != length) throw new EndOfStreamException();
             Buffer.BlockCopy(unsigned, 0, destination, offset, length);
         }
@@ -200,9 +252,10 @@ sealed class JavaByteBuffer : IDisposable
     public JavaByteBuffer limit(int value)
     {
         ThrowIfDisposed();
-        if (value < 0 || value > capacity) throw new ArgumentOutOfRangeException(nameof(value));
+        if (value < 0 || value > bufferCapacity) throw new ArgumentOutOfRangeException(nameof(value));
         upperBound = value;
         if (cursor > upperBound) cursor = upperBound;
+        if (markedCursor > upperBound) markedCursor = -1;
         return this;
     }
     public int position()
@@ -215,15 +268,52 @@ sealed class JavaByteBuffer : IDisposable
         ThrowIfDisposed();
         if (value < 0 || value > upperBound) throw new ArgumentOutOfRangeException(nameof(value));
         cursor = value;
+        if (markedCursor > cursor) markedCursor = -1;
+        return this;
+    }
+    public JavaByteBuffer flip()
+    {
+        ThrowIfDisposed();
+        upperBound = cursor;
+        cursor = 0;
+        markedCursor = -1;
+        return this;
+    }
+    public int remaining()
+    {
+        ThrowIfDisposed();
+        return upperBound - cursor;
+    }
+    public bool isReadOnly()
+    {
+        ThrowIfDisposed();
+        return readOnly;
+    }
+    public JavaByteOrder order()
+    {
+        ThrowIfDisposed();
+        return byteOrder;
+    }
+    public JavaByteBuffer order(JavaByteOrder value)
+    {
+        ThrowIfDisposed();
+        byteOrder = value;
         return this;
     }
     public JavaByteBuffer put(sbyte value)
     {
         ThrowIfDisposed();
+        ThrowIfReadOnly();
         if (cursor >= upperBound) throw new EndOfStreamException();
-        if (mappedView is not null)
-            throw new NotSupportedException("A read-only mapped Java byte buffer cannot be written.");
-        bytes![cursor++] = value;
+        WriteByte(cursor++, value);
+        return this;
+    }
+    public JavaByteBuffer put(int index, sbyte value)
+    {
+        ThrowIfDisposed();
+        ThrowIfReadOnly();
+        CheckAbsolute(index, 1);
+        WriteByte(index, value);
         return this;
     }
     public JavaByteBuffer put(sbyte[] source) => put(source, 0, source.Length);
@@ -231,27 +321,49 @@ sealed class JavaByteBuffer : IDisposable
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(source);
-        if (offset < 0 || length < 0 || offset + length > source.Length)
+        if (offset < 0 || length < 0 || offset > source.Length - length)
             throw new ArgumentOutOfRangeException();
+        ThrowIfReadOnly();
         if (length > upperBound - cursor) throw new EndOfStreamException();
-        if (mappedView is not null)
-            throw new NotSupportedException("A read-only mapped Java byte buffer cannot be written.");
-        Array.Copy(source, offset, bytes!, cursor, length);
+        Array.Copy(source, offset, bytes!, storageOffset + cursor, length);
         cursor += length;
+        return this;
+    }
+    public JavaByteBuffer putShort(short value)
+    {
+        WriteRelative(unchecked((ushort)value), 2);
+        return this;
+    }
+    public JavaByteBuffer putShort(int index, short value)
+    {
+        WriteAbsolute(index, unchecked((ushort)value), 2);
+        return this;
+    }
+    public JavaByteBuffer putInt(int value)
+    {
+        WriteRelative(unchecked((uint)value), 4);
+        return this;
+    }
+    public JavaByteBuffer putInt(int index, int value)
+    {
+        WriteAbsolute(index, unchecked((uint)value), 4);
         return this;
     }
     public JavaByteBuffer putLong(long value)
     {
-        ThrowIfDisposed();
-        if (8 > upperBound - cursor) throw new EndOfStreamException();
-        for (var shift = 56; shift >= 0; shift -= 8)
-            put(unchecked((sbyte)(value >> shift)));
+        WriteRelative(unchecked((ulong)value), 8);
+        return this;
+    }
+    public JavaByteBuffer putLong(int index, long value)
+    {
+        WriteAbsolute(index, unchecked((ulong)value), 8);
         return this;
     }
     public JavaByteBuffer rewind()
     {
         ThrowIfDisposed();
         cursor = 0;
+        markedCursor = -1;
         return this;
     }
     internal int Remaining
@@ -300,8 +412,74 @@ sealed class JavaByteBuffer : IDisposable
         mappedView?.Dispose();
         mappedFile?.Dispose();
     }
+    private ulong ReadRelative(int width)
+    {
+        ThrowIfDisposed();
+        if (width > upperBound - cursor) throw new EndOfStreamException();
+        var result = ReadValue(cursor, width);
+        cursor += width;
+        return result;
+    }
+    private ulong ReadAbsolute(int index, int width)
+    {
+        ThrowIfDisposed();
+        CheckAbsolute(index, width);
+        return ReadValue(index, width);
+    }
+    private ulong ReadValue(int index, int width)
+    {
+        ulong result = 0;
+        if (byteOrder == JavaByteOrder.BigEndian)
+            for (var offset = 0; offset < width; offset++)
+                result = (result << 8) | unchecked((byte)ReadByte(index + offset));
+        else
+            for (var offset = width - 1; offset >= 0; offset--)
+                result = (result << 8) | unchecked((byte)ReadByte(index + offset));
+        return result;
+    }
+    private void WriteRelative(ulong value, int width)
+    {
+        ThrowIfDisposed();
+        ThrowIfReadOnly();
+        if (width > upperBound - cursor) throw new EndOfStreamException();
+        WriteValue(cursor, value, width);
+        cursor += width;
+    }
+    private void WriteAbsolute(int index, ulong value, int width)
+    {
+        ThrowIfDisposed();
+        ThrowIfReadOnly();
+        CheckAbsolute(index, width);
+        WriteValue(index, value, width);
+    }
+    private void WriteValue(int index, ulong value, int width)
+    {
+        for (var offset = 0; offset < width; offset++)
+        {
+            var shift = byteOrder == JavaByteOrder.BigEndian
+                ? 8 * (width - 1 - offset)
+                : 8 * offset;
+            WriteByte(index + offset, unchecked((sbyte)(value >> shift)));
+        }
+    }
+    private void CheckAbsolute(int index, int width)
+    {
+        if (index < 0 || width > upperBound - index)
+            throw new ArgumentOutOfRangeException(nameof(index));
+    }
     private sbyte ReadByte(int index) =>
-        mappedView is null ? bytes![index] : unchecked((sbyte)mappedView.ReadByte(index));
+        mappedView is null
+            ? bytes![storageOffset + index]
+            : unchecked((sbyte)mappedView.ReadByte(storageOffset + index));
+    private void WriteByte(int index, sbyte value)
+    {
+        if (mappedView is null) bytes![storageOffset + index] = value;
+        else mappedView.Write(storageOffset + index, unchecked((byte)value));
+    }
+    private void ThrowIfReadOnly()
+    {
+        if (readOnly) throw new NotSupportedException("A read-only Java byte buffer cannot be written.");
+    }
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(disposed, this);
 }
 

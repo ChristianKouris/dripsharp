@@ -1231,6 +1231,69 @@ internal sealed class JavaPipedOutputStream : Stream
     }
 }
 
+internal sealed class JavaDataInputStream : IDisposable
+{
+    private readonly Stream input;
+
+    internal JavaDataInputStream(Stream input) =>
+        this.input = input ?? throw new ArgumentNullException(nameof(input));
+
+    internal sbyte readByte() => unchecked((sbyte)readUnsignedByte());
+
+    internal int readUnsignedByte()
+    {
+        var value = input.ReadByte();
+        if (value < 0) throw new EndOfStreamException();
+        return value;
+    }
+
+    internal short readShort() => unchecked((short)readUnsignedShort());
+
+    internal int readUnsignedShort() => (readUnsignedByte() << 8) | readUnsignedByte();
+
+    internal int readInt() => unchecked(
+        (readUnsignedByte() << 24) |
+        (readUnsignedByte() << 16) |
+        (readUnsignedByte() << 8) |
+        readUnsignedByte());
+
+    internal long readLong() => unchecked(
+        ((long)readUnsignedByte() << 56) |
+        ((long)readUnsignedByte() << 48) |
+        ((long)readUnsignedByte() << 40) |
+        ((long)readUnsignedByte() << 32) |
+        ((long)readUnsignedByte() << 24) |
+        ((long)readUnsignedByte() << 16) |
+        ((long)readUnsignedByte() << 8) |
+        (long)readUnsignedByte());
+
+    internal void readFully(sbyte[] destination) =>
+        readFully(destination, 0, destination.Length);
+
+    internal void readFully(sbyte[] destination, int offset, int length)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        if (offset < 0 || length < 0 || offset > destination.Length - length)
+            throw new ArgumentOutOfRangeException();
+        var unsigned = new byte[length];
+        var total = 0;
+        while (total < length)
+        {
+            var count = input.Read(unsigned, total, length - total);
+            if (count <= 0) throw new EndOfStreamException();
+            Buffer.BlockCopy(unsigned, total, destination, offset + total, count);
+            total += count;
+        }
+    }
+
+    internal int available() => input.CanSeek
+        ? checked((int)Math.Min(int.MaxValue, Math.Max(0, input.Length - input.Position)))
+        : 0;
+
+    internal void close() => input.Dispose();
+    public void Dispose() => input.Dispose();
+}
+
 internal sealed class JavaDataOutputStream : Stream
 {
     private readonly Stream output;

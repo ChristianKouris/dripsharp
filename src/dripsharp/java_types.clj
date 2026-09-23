@@ -161,6 +161,8 @@
                              :dotnet.type/buffered-writer]
    "java.io.LineNumberReader" ["global::DripSharp.Runtime.JavaLineNumberReader"
                                :dotnet.type/line-number-reader]
+   "java.io.DataInputStream" ["global::DripSharp.Runtime.JavaDataInputStream"
+                              :dotnet.type/data-input-stream]
    "java.io.DataOutputStream" ["global::DripSharp.Runtime.JavaDataOutputStream"
                                :dotnet.type/data-output-stream]
    "java.io.FilterOutputStream" ["global::DripSharp.Runtime.JavaFilterOutputStream"
@@ -268,6 +270,14 @@
                                         :dotnet.type/standard-charsets]
    "java.nio.BufferUnderflowException" ["global::System.IO.EndOfStreamException"
                                         :dotnet.type/end-of-stream-exception]
+   "java.nio.BufferOverflowException" ["global::System.IO.EndOfStreamException"
+                                       :dotnet.type/end-of-stream-exception]
+   "java.nio.InvalidMarkException" ["global::System.InvalidOperationException"
+                                    :dotnet.type/invalid-operation-exception]
+   "java.nio.ReadOnlyBufferException" ["global::System.NotSupportedException"
+                                       :dotnet.type/not-supported-exception]
+   "java.nio.ByteOrder" ["global::DripSharp.Runtime.JavaByteOrder"
+                         :dotnet.type/byte-order]
    "java.nio.file.Files" ["global::DripSharp.Runtime.JavaCompat"
                           :dotnet.type/java-compat]
    "java.nio.file.Paths" ["global::DripSharp.Runtime.JavaCompat"

@@ -6,12 +6,12 @@
             [dripsharp.util :as util])
   (:import [java.util Random]))
 
-(def generator-identity {:id :java-compat-operations :version 4})
+(def generator-identity {:id :java-compat-operations :version 5})
 (def default-limits {:max-operations 32 :max-value-units 32 :max-input-bytes 65536})
 (def generated-families
   "Families with an explicit generator/domain model. Kept separate from the
   larger fixed-case registry so registration never implies generation support."
-  ["byte-array-input" "byte-array-output" "byte-buffer" "file"
+  ["binary-data" "byte-array-input" "byte-array-output" "byte-buffer" "file"
    "filter-input" "filter-output" "long" "numeric" "random-access" "string"])
 
 (defn- require! [condition message]
@@ -67,12 +67,101 @@
       (case operation
         "wrap" (if (= "n:" (first arguments))
                  ["null-pointer" state]
-                 ["none" {:size (byte-count (first arguments)) :position 0 :creator step}])
-        (let [width (case operation "get" 1 "get-int" 4)]
-          (cond
-            (nil? state) ["null-pointer" state]
-            (> (+ (:position state) width) (:size state)) ["buffer-underflow" state]
-            :else ["none" (update state :position + width)])))
+                 (let [size (byte-count (first arguments))]
+                   ["none" {:creator step :active "root"
+                            :views {"root" {:capacity size :limit size :position 0
+                                            :mark nil :read-only false :order :big}}}]))
+        (if (nil? state)
+          ["null-pointer" state]
+          (let [active (:active state) view (get-in state [:views active])
+                integer #(parse-long (subs % 2))
+                width (get {"get" 1 "get-at" 1 "put" 1 "put-at" 1
+                            "get-short" 2 "get-short-at" 2 "put-short" 2 "put-short-at" 2
+                            "get-int" 4 "get-int-at" 4 "put-int" 4 "put-int-at" 4
+                            "get-long" 8 "get-long-at" 8 "put-long" 8 "put-long-at" 8}
+                           operation)
+                absolute? (str/ends-with? operation "-at")
+                write? (str/starts-with? operation "put")
+                index (when absolute? (integer (first arguments)))
+                fits? (when width
+                        (if absolute?
+                          (and (not (neg? index)) (<= (+ index width) (:limit view)))
+                          (<= (+ (:position view) width) (:limit view))))
+                advance #(if absolute? % (update % :position + width))]
+            (cond
+              (= operation "capacity") ["none" state]
+              (= operation "position") ["none" state]
+              (= operation "limit") ["none" state]
+              (= operation "remaining") ["none" state]
+              (= operation "is-read-only") ["none" state]
+              (= operation "select") ["none" (assoc state :active (case (first arguments)
+                                                                    "u:0072006f006f0074" "root"
+                                                                    "u:0076006900650077" "view"))]
+              (= operation "order") ["none" (assoc-in state [:views active :order]
+                                                      (if (= "u:006200690067" (first arguments)) :big :little))]
+              (= operation "set-position")
+              (let [value (integer (first arguments))]
+                (if (or (neg? value) (> value (:limit view))) ["illegal-argument" state]
+                    ["none" (-> state
+                                (assoc-in [:views active :position] value)
+                                (cond-> (and (some? (:mark view)) (> (:mark view) value))
+                                  (assoc-in [:views active :mark] nil)))]))
+              (= operation "set-limit")
+              (let [value (integer (first arguments))]
+                (if (or (neg? value) (> value (:capacity view))) ["illegal-argument" state]
+                    ["none" (-> state
+                                (assoc-in [:views active :limit] value)
+                                (update-in [:views active :position] min value)
+                                (cond-> (and (some? (:mark view)) (> (:mark view) value))
+                                  (assoc-in [:views active :mark] nil)))]))
+              (= operation "mark") ["none" (assoc-in state [:views active :mark] (:position view))]
+              (= operation "reset") (if-let [mark (:mark view)]
+                                      ["none" (assoc-in state [:views active :position] mark)]
+                                      ["invalid-mark" state])
+              (= operation "clear") ["none" (assoc-in state [:views active]
+                                                      (assoc view :position 0 :limit (:capacity view) :mark nil))]
+              (= operation "flip") ["none" (assoc-in state [:views active]
+                                                     (assoc view :position 0 :limit (:position view) :mark nil))]
+              (= operation "rewind") ["none" (assoc-in state [:views active]
+                                                       (assoc view :position 0 :mark nil))]
+              (= operation "duplicate") ["none" (assoc state
+                                                        :views (assoc (:views state) "view"
+                                                                      (assoc view :order :big))
+                                                        :active "view")]
+              (= operation "slice") (let [remaining (- (:limit view) (:position view))]
+                                      ["none" (-> state
+                                                  (assoc-in [:views "view"]
+                                                            {:capacity remaining :limit remaining
+                                                             :position 0 :mark nil
+                                                             :read-only (:read-only view) :order :big})
+                                                  (assoc :active "view"))])
+              (= operation "read-only") ["none" (-> state
+                                                    (assoc-in [:views "view"]
+                                                              (assoc view :read-only true :order :big))
+                                                    (assoc :active "view"))]
+              width
+              (cond
+                (and write? (:read-only view)) ["read-only" state]
+                (not fits?) [(if write? "buffer-overflow"
+                                 (if absolute? "index-out-of-bounds" "buffer-underflow")) state]
+                :else ["none" (update-in state [:views active] advance)])
+              :else ["none" state]))))
+
+      "binary-data"
+      (case operation
+        "open" ["none" {:size (byte-count (first arguments)) :position 0 :creator step}]
+        (if (nil? state)
+          ["null-pointer" state]
+          (let [width (get {"read-byte" 1 "read-unsigned-byte" 1 "read-short" 2
+                            "read-unsigned-short" 2 "read-int" 4 "read-long" 8}
+                           operation)
+                width (if (= operation "read-fully")
+                        (integer (nth arguments 2)) width)
+                remaining (- (:size state) (:position state))]
+            (if width
+              [(if (> width remaining) "eof" "none")
+               (update state :position + (min width remaining))]
+              ["none" state]))))
 
       "byte-array-input"
       (case operation
@@ -197,6 +286,12 @@
         operation
         (case family
           "byte-buffer" (pick rng (if state ["wrap" "get" "get" "get-int"] ["wrap" "wrap" "get"]))
+          "binary-data" (pick rng (if state ["open" "read-byte" "read-unsigned-byte"
+                                             "read-short" "read-unsigned-short" "read-int"
+                                             "read-long" "read-fully" "write-byte"
+                                             "write-short" "write-int" "write-long"
+                                             "write-buffer" "flush"]
+                                      ["open" "open" "read-byte"]))
           "byte-array-input" (pick rng (if state ["open" "read-one" "read-buffer" "skip"
                                                   "available" "mark" "reset" "close"]
                                            ["open" "open" "read-one"]))
@@ -222,6 +317,16 @@
         (case family
           "byte-buffer" (if (contains? #{"get" "get-int"} operation) []
                             [(if (zero? (.nextInt rng 8)) "n:" (bytes))])
+          "binary-data"
+          (case operation
+            "open" [(bytes)]
+            "read-fully" (let [buffer (bytes) size (quot (- (count buffer) 2) 2)]
+                           [buffer "i:0" (str "i:" size)])
+            "write-buffer" (let [buffer (bytes) size (quot (- (count buffer) 2) 2)]
+                             [buffer "i:0" (str "i:" size)])
+            ("write-byte" "write-short" "write-int") [(small-int)]
+            "write-long" [(value rng :integer max-units)]
+            [])
           "byte-array-input"
           (case operation
             "open" (let [data (bytes) size (quot (- (count data) 2) 2)] [data "i:0" (str "i:" size)])
@@ -265,6 +370,86 @@
     {:family family :operation operation :arguments arguments :step step
      :constructor? (open? operation)}))
 
+(defn- exact-bytes [^Random rng length]
+  (str "b:" (apply str (repeatedly length
+                                   #(format "%02x" (biased rng [0 1 127 128 255]
+                                                           (fn [] (.nextInt rng 256))))))))
+
+(defn- focused-specs [^Random rng family max-units]
+  (let [size (min 16 max-units)
+        bytes (exact-bytes rng size)
+        data (exact-bytes rng (min 8 max-units))
+        sentinel (exact-bytes rng (min 6 max-units))
+        read-length (max 0 (min 4 (dec max-units)))]
+    (case family
+      "byte-buffer"
+      [{:operation "wrap" :arguments [bytes]}
+       {:operation "capacity" :arguments []}
+       {:operation "limit" :arguments []}
+       {:operation "position" :arguments []}
+       {:operation "mark" :arguments []}
+       {:operation "set-position" :arguments ["i:4"]}
+       {:operation "reset" :arguments []}
+       {:operation "order" :arguments ["u:006c006900740074006c0065"]}
+       {:operation "get-short" :arguments []}
+       {:operation "get-int-at" :arguments ["i:2"]}
+       {:operation "put-int-at" :arguments ["i:4" "i:-2147483648"]}
+       {:operation "set-position" :arguments ["i:4"]}
+       {:operation "slice" :arguments []}
+       {:operation "put" :arguments ["i:128"]}
+       {:operation "select" :arguments ["u:0072006f006f0074"]}
+       {:operation "get-at" :arguments ["i:4"]}
+       {:operation "duplicate" :arguments []}
+       {:operation "set-position" :arguments ["i:5"]}
+       {:operation "select" :arguments ["u:0072006f006f0074"]}
+       {:operation "read-only" :arguments []}
+       {:operation "put" :arguments ["i:1"]}
+       {:operation "select" :arguments ["u:0072006f006f0074"]}
+       {:operation "set-limit" :arguments ["i:5"]}
+       {:operation "set-position" :arguments ["i:5"]}
+       {:operation "put" :arguments ["i:1"]}
+       {:operation "get" :arguments []}
+       {:operation "flip" :arguments []}
+       {:operation "get-long" :arguments []}
+       {:operation "clear" :arguments []}
+       {:operation "put-long" :arguments ["i:-9223372036854775808"]}
+       {:operation "rewind" :arguments []}
+       {:operation "get-long" :arguments []}]
+
+      "binary-data"
+      [{:operation "open" :arguments [data]}
+       {:operation "read-byte" :arguments []}
+       {:operation "read-unsigned-byte" :arguments []}
+       {:operation "read-short" :arguments []}
+       {:operation "read-int" :arguments []}
+       {:operation "read-long" :arguments []}
+       {:operation "open" :arguments [data]}
+       {:operation "read-byte" :arguments []}
+       {:operation "read-long" :arguments []}
+       {:operation "open" :arguments [data]}
+       {:operation "read-fully" :arguments [sentinel "i:1" (str "i:" read-length)]}
+       {:operation "write-byte" :arguments ["i:128"]}
+       {:operation "write-short" :arguments ["i:-32768"]}
+       {:operation "write-int" :arguments ["i:-2147483648"]}
+       {:operation "write-long" :arguments ["i:-9223372036854775808"]}
+       {:operation "write-buffer" :arguments [data "i:0" (str "i:" (min 3 size))]}
+       {:operation "flush" :arguments []}]
+      nil)))
+
+(defn- sequence-rows [family specs]
+  (:rows
+   (reduce
+    (fn [{:keys [state rows]} [index spec]]
+      (let [operation (:operation spec) constructor? (contains? #{"wrap" "open"} operation)
+            row {:family family :case "h0" :handle "h0" :step (str index)
+                 :operation operation :arguments (:arguments spec)
+                 :requires (if (and state (not constructor?)) [(:creator state)] [])}
+            [exception next-state] (transition state row)]
+        {:state next-state
+         :rows (conj rows (assoc row :expected-exception exception
+                                 :intent (if (= exception "none") :valid :invalid)))}))
+    {:state nil :rows []} (map-indexed vector specs))))
+
 (defn generate
   "Produces one concrete case once; replay consumes :operations, not this fn.
   Native (family, case) runner state keys carry the explicit :handle identity."
@@ -278,26 +463,30 @@
          rng (Random. (long seed))
          ;; Mix the first draw: adjacent java.util.Random seeds correlate in low bits.
          n (inc (int (mod (hash (.nextLong rng)) (:max-operations limits))))
+         focused (when (= 1 (count families))
+                   (focused-specs rng (first families) (:max-value-units limits)))
          operations
-         (loop [i 0 states {} rows []]
-           (if (= i n)
-             rows
-             (let [family (pick rng families)
-                   handle (str "h" (.nextInt rng 3))
-                   key [family handle]
-                   state (get states key)
-                   generated (generated-operation rng family state (str i)
-                                                  (:max-value-units limits))
-                   operation (:operation generated)
-                   arguments (:arguments generated)
-                   row {:family family :case handle :handle handle :step (str i)
-                        :operation operation :arguments arguments
-                        :requires (if (and state (not (:constructor? generated)))
-                                    [(:creator state)] [])}
-                   [exception next-state] (transition state row)]
-               (recur (inc i) (assoc states key next-state)
-                      (conj rows (assoc row :expected-exception exception
-                                        :intent (if (= exception "none") :valid :invalid)))))))]
+         (if focused
+           (sequence-rows (first families) (take (:max-operations limits) focused))
+           (loop [i 0 states {} rows []]
+             (if (= i n)
+               rows
+               (let [family (pick rng families)
+                     handle (str "h" (.nextInt rng 3))
+                     key [family handle]
+                     state (get states key)
+                     generated (generated-operation rng family state (str i)
+                                                    (:max-value-units limits))
+                     operation (:operation generated)
+                     arguments (:arguments generated)
+                     row {:family family :case handle :handle handle :step (str i)
+                          :operation operation :arguments arguments
+                          :requires (if (and state (not (:constructor? generated)))
+                                      [(:creator state)] [])}
+                     [exception next-state] (transition state row)]
+                 (recur (inc i) (assoc states key next-state)
+                        (conj rows (assoc row :expected-exception exception
+                                          :intent (if (= exception "none") :valid :invalid))))))))]
      {:schema-version 1 :generator generator-identity :seed seed
       :generator-runtime {:clojure (clojure-version) :prng "java.util.Random"
                           :java (System/getProperty "java.runtime.version")}
@@ -315,12 +504,52 @@
        (zero? (parse-long (subs offset 2)))
        (= (parse-long (subs length 2)) (quot (- (count buffer) 2) 2))))
 
+(defn- buffer-range? [[buffer offset length]]
+  (and (bytes-token? buffer) (integer-token? offset) (integer-token? length)
+       (let [start (parse-long (subs offset 2))
+             size (parse-long (subs length 2))
+             capacity (quot (- (count buffer) 2) 2)]
+         (and (not (neg? start)) (not (neg? size))
+              (<= (+ start size) capacity)))))
+
 (defn- operation-domain? [family operation arguments]
   (let [token (first arguments)]
     (case family
-      "byte-buffer" (if (contains? #{"get" "get-int"} operation) (empty? arguments)
-                        (and (= operation "wrap") (= 1 (count arguments))
-                             (or (= token "n:") (bytes-token? token))))
+      "byte-buffer"
+      (cond
+        (= operation "wrap") (and (= 1 (count arguments))
+                                  (or (= token "n:") (bytes-token? token)))
+        (contains? #{"capacity" "position" "limit" "remaining" "is-read-only"
+                     "mark" "reset" "clear" "flip" "rewind" "duplicate" "slice"
+                     "read-only" "get" "get-short" "get-int" "get-long"} operation)
+        (empty? arguments)
+        (contains? #{"set-position" "set-limit" "get-at" "get-short-at" "get-int-at"
+                     "get-long-at" "put" "put-short" "put-int" "put-long"} operation)
+        (and (= 1 (count arguments)) (integer-token? token))
+        (= operation "select") (or (= arguments ["u:0072006f006f0074"])
+                                   (= arguments ["u:0076006900650077"]))
+        (= operation "order") (or (= arguments ["u:006200690067"])
+                                  (= arguments ["u:006c006900740074006c0065"]))
+        (contains? #{"put-at" "put-short-at" "put-int-at" "put-long-at"} operation)
+        (and (= 2 (count arguments)) (every? integer-token? arguments))
+        :else false)
+      "binary-data"
+      (case operation
+        "open" (and (= 1 (count arguments)) (bytes-token? token))
+        "read-fully" (and (= 3 (count arguments))
+                          (bytes-token? token)
+                          (every? integer-token? (rest arguments))
+                          (let [offset (parse-long (subs (second arguments) 2))
+                                length (parse-long (subs (nth arguments 2) 2))
+                                size (quot (- (count token) 2) 2)]
+                            (and (not (neg? offset)) (not (neg? length))
+                                 (<= (+ offset length) size))))
+        "write-buffer" (buffer-range? arguments)
+        ("write-byte" "write-short" "write-int" "write-long")
+        (and (= 1 (count arguments)) (integer-token? token))
+        ("read-byte" "read-unsigned-byte" "read-short" "read-unsigned-short"
+                     "read-int" "read-long" "flush") (empty? arguments)
+        false)
       "string" (and (= operation "hash") (= 1 (count arguments))
                     (or (= token "n:") (str/starts-with? token "u:")))
       "numeric" (and (contains? #{"int-div" "int-rem" "long-div" "long-rem"} operation)

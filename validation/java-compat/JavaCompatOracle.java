@@ -1,6 +1,7 @@
 import java.io.ByteArrayOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.DataOutputStream;
+import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.File;
 import java.io.FileInputStream;
@@ -15,6 +16,7 @@ import java.io.StringReader;
 import java.math.RoundingMode;
 import java.net.URI;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
@@ -171,6 +173,28 @@ public final class JavaCompatOracle {
     RandomCase(RandomAccessFile file, Path path) { this.file = file; this.path = path; }
   }
 
+  private static final class BufferCase {
+    final byte[] bytes;
+    final Map<String, ByteBuffer> views = new java.util.TreeMap<>();
+    String activeName = "root";
+    BufferCase(byte[] bytes) { this.bytes = bytes; views.put("root", ByteBuffer.wrap(bytes)); }
+    ByteBuffer active() { return views.get(activeName); }
+  }
+
+  private static final class DataCase {
+    final byte[] inputBytes;
+    final ByteArrayInputStream inputStream;
+    final DataInputStream input;
+    final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+    final DataOutputStream output = new DataOutputStream(outputStream);
+    byte[] lastBuffer;
+    DataCase(byte[] bytes) {
+      inputBytes = bytes;
+      inputStream = new ByteArrayInputStream(bytes);
+      input = new DataInputStream(inputStream);
+    }
+  }
+
   // Inputs are ASCII typed tokens, never JSON numbers or Unicode scalars.
   private static Object caseValue(String token) {
     if (token.equals("n:")) return null;
@@ -231,6 +255,30 @@ public final class JavaCompatOracle {
         HexFormat.of().formatHex(bytes), buffer));
   }
 
+  private static String bufferState(BufferCase buffer) {
+    if (buffer == null) return "n:";
+    var views = new ArrayList<String>();
+    for (var entry : buffer.views.entrySet()) {
+      var view = entry.getValue();
+      views.add(String.join(",", entry.getKey(), Integer.toString(view.position()),
+          Integer.toString(view.limit()), Integer.toString(view.capacity()),
+          Integer.toString(view.remaining()),
+          view.order() == ByteOrder.BIG_ENDIAN ? "big" : "little",
+          Boolean.toString(view.isReadOnly())));
+    }
+    return stringToken(String.join("|", HexFormat.of().formatHex(buffer.bytes),
+        buffer.activeName, String.join(";", views)));
+  }
+
+  private static String dataState(DataCase data) {
+    if (data == null) return "n:";
+    return stringToken(String.join("|",
+        Integer.toString(data.inputBytes.length - data.inputStream.available()),
+        Integer.toString(data.inputBytes.length),
+        HexFormat.of().formatHex(data.outputStream.toByteArray()),
+        data.lastBuffer == null ? "-" : HexFormat.of().formatHex(data.lastBuffer)));
+  }
+
   private static String fileInspection(File file) {
     return String.join("\u0001",
         file.getPath(), file.getName(), file.getParent() == null ? "\u0002" : file.getParent(),
@@ -266,7 +314,8 @@ public final class JavaCompatOracle {
       throw new IllegalArgumentException("Invalid cases header or empty input");
     var results = new ArrayList<String>();
     results.add("DRIPSHARP_DIFFERENTIAL_CASE_RESULTS_V1");
-    var buffers = new java.util.HashMap<String, ByteBuffer>();
+    var buffers = new java.util.HashMap<String, BufferCase>();
+    var dataCases = new java.util.HashMap<String, DataCase>();
     var inputs = new java.util.HashMap<String, InputCase>();
     var outputs = new java.util.HashMap<String, OutputCase>();
     var randoms = new java.util.HashMap<String, RandomCase>();
@@ -287,7 +336,25 @@ public final class JavaCompatOracle {
       int arity = switch (operation) {
         case "numeric/int-div", "numeric/int-rem", "numeric/long-div", "numeric/long-rem" -> 2;
         case "byte-buffer/wrap", "string/hash", "long/hash" -> 1;
-        case "byte-buffer/get", "byte-buffer/get-int" -> 0;
+        case "byte-buffer/capacity", "byte-buffer/position", "byte-buffer/limit",
+             "byte-buffer/remaining", "byte-buffer/is-read-only", "byte-buffer/mark",
+             "byte-buffer/reset", "byte-buffer/clear", "byte-buffer/flip",
+             "byte-buffer/rewind", "byte-buffer/duplicate", "byte-buffer/slice",
+             "byte-buffer/read-only", "byte-buffer/get", "byte-buffer/get-short",
+             "byte-buffer/get-int", "byte-buffer/get-long" -> 0;
+        case "byte-buffer/set-position", "byte-buffer/set-limit", "byte-buffer/select",
+             "byte-buffer/order", "byte-buffer/get-at", "byte-buffer/get-short-at",
+             "byte-buffer/get-int-at", "byte-buffer/get-long-at", "byte-buffer/put",
+             "byte-buffer/put-short", "byte-buffer/put-int", "byte-buffer/put-long" -> 1;
+        case "byte-buffer/put-at", "byte-buffer/put-short-at",
+             "byte-buffer/put-int-at", "byte-buffer/put-long-at" -> 2;
+        case "binary-data/open" -> 1;
+        case "binary-data/read-byte", "binary-data/read-unsigned-byte",
+             "binary-data/read-short", "binary-data/read-unsigned-short",
+             "binary-data/read-int", "binary-data/read-long", "binary-data/flush" -> 0;
+        case "binary-data/write-byte", "binary-data/write-short",
+             "binary-data/write-int", "binary-data/write-long" -> 1;
+        case "binary-data/read-fully", "binary-data/write-buffer" -> 3;
         case "byte-array-input/open", "filter-input/open",
              "byte-array-input/read-buffer", "filter-input/read-buffer",
              "byte-array-output/write-buffer", "filter-output/write-buffer",
@@ -319,6 +386,7 @@ public final class JavaCompatOracle {
       for (int i = 0; i < arity; i++) values[i] = caseValue(fields[5 + i]);
       // Domain validation occurs outside the observed operation's exception boundary.
       if (operation.equals("byte-buffer/wrap") && values[0] != null && !(values[0] instanceof byte[])
+          || operation.equals("binary-data/open") && !(values[0] instanceof byte[])
           || operation.equals("string/hash") && values[0] != null && !(values[0] instanceof String)
           || operation.equals("long/hash") && !(values[0] instanceof java.math.BigInteger)
           || (operation.equals("byte-array-input/open") || operation.equals("filter-input/open"))
@@ -342,9 +410,59 @@ public final class JavaCompatOracle {
           case "numeric/int-rem" -> result = "i:" + ((int)numericLeft % (int)numericRight);
           case "numeric/long-div" -> result = "i:" + (numericLeft / numericRight);
           case "numeric/long-rem" -> result = "i:" + (numericLeft % numericRight);
-          case "byte-buffer/wrap" -> buffers.put(key, ByteBuffer.wrap((byte[])values[0]));
-          case "byte-buffer/get" -> result = "i:" + buffers.get(key).get();
-          case "byte-buffer/get-int" -> result = "i:" + buffers.get(key).getInt();
+          case "byte-buffer/wrap" -> buffers.put(key, new BufferCase((byte[])values[0]));
+          case "byte-buffer/capacity" -> result = "i:" + buffers.get(key).active().capacity();
+          case "byte-buffer/position" -> result = "i:" + buffers.get(key).active().position();
+          case "byte-buffer/limit" -> result = "i:" + buffers.get(key).active().limit();
+          case "byte-buffer/remaining" -> result = "i:" + buffers.get(key).active().remaining();
+          case "byte-buffer/is-read-only" -> result = "i:" + (buffers.get(key).active().isReadOnly() ? 1 : 0);
+          case "byte-buffer/set-position" -> { buffers.get(key).active().position(intValue(values[0])); result = "i:1"; }
+          case "byte-buffer/set-limit" -> { buffers.get(key).active().limit(intValue(values[0])); result = "i:1"; }
+          case "byte-buffer/mark" -> { buffers.get(key).active().mark(); result = "i:1"; }
+          case "byte-buffer/reset" -> { buffers.get(key).active().reset(); result = "i:1"; }
+          case "byte-buffer/clear" -> { buffers.get(key).active().clear(); result = "i:1"; }
+          case "byte-buffer/flip" -> { buffers.get(key).active().flip(); result = "i:1"; }
+          case "byte-buffer/rewind" -> { buffers.get(key).active().rewind(); result = "i:1"; }
+          case "byte-buffer/duplicate" -> { var b = buffers.get(key); b.views.put("view", b.active().duplicate()); b.activeName = "view"; result = "i:1"; }
+          case "byte-buffer/slice" -> { var b = buffers.get(key); b.views.put("view", b.active().slice()); b.activeName = "view"; result = "i:1"; }
+          case "byte-buffer/read-only" -> { var b = buffers.get(key); b.views.put("view", b.active().asReadOnlyBuffer()); b.activeName = "view"; result = "i:1"; }
+          case "byte-buffer/select" -> { var b = buffers.get(key); b.activeName = (String)values[0]; if (b.active() == null) throw new IllegalArgumentException(); }
+          case "byte-buffer/order" -> { buffers.get(key).active().order(values[0].equals("big") ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN); result = "i:1"; }
+          case "byte-buffer/get" -> result = "i:" + buffers.get(key).active().get();
+          case "byte-buffer/get-at" -> result = "i:" + buffers.get(key).active().get(intValue(values[0]));
+          case "byte-buffer/get-short" -> result = "i:" + buffers.get(key).active().getShort();
+          case "byte-buffer/get-short-at" -> result = "i:" + buffers.get(key).active().getShort(intValue(values[0]));
+          case "byte-buffer/get-int" -> result = "i:" + buffers.get(key).active().getInt();
+          case "byte-buffer/get-int-at" -> result = "i:" + buffers.get(key).active().getInt(intValue(values[0]));
+          case "byte-buffer/get-long" -> result = "i:" + buffers.get(key).active().getLong();
+          case "byte-buffer/get-long-at" -> result = "i:" + buffers.get(key).active().getLong(intValue(values[0]));
+          case "byte-buffer/put" -> { buffers.get(key).active().put((byte)intValue(values[0])); result = "i:1"; }
+          case "byte-buffer/put-at" -> { buffers.get(key).active().put(intValue(values[0]), (byte)intValue(values[1])); result = "i:1"; }
+          case "byte-buffer/put-short" -> { buffers.get(key).active().putShort((short)intValue(values[0])); result = "i:1"; }
+          case "byte-buffer/put-short-at" -> { buffers.get(key).active().putShort(intValue(values[0]), (short)intValue(values[1])); result = "i:1"; }
+          case "byte-buffer/put-int" -> { buffers.get(key).active().putInt(intValue(values[0])); result = "i:1"; }
+          case "byte-buffer/put-int-at" -> { buffers.get(key).active().putInt(intValue(values[0]), intValue(values[1])); result = "i:1"; }
+          case "byte-buffer/put-long" -> { buffers.get(key).active().putLong(longValue(values[0])); result = "i:1"; }
+          case "byte-buffer/put-long-at" -> { buffers.get(key).active().putLong(intValue(values[0]), longValue(values[1])); result = "i:1"; }
+          case "binary-data/open" -> dataCases.put(key, new DataCase((byte[])values[0]));
+          case "binary-data/read-byte" -> result = "i:" + dataCases.get(key).input.readByte();
+          case "binary-data/read-unsigned-byte" -> result = "i:" + dataCases.get(key).input.readUnsignedByte();
+          case "binary-data/read-short" -> result = "i:" + dataCases.get(key).input.readShort();
+          case "binary-data/read-unsigned-short" -> result = "i:" + dataCases.get(key).input.readUnsignedShort();
+          case "binary-data/read-int" -> result = "i:" + dataCases.get(key).input.readInt();
+          case "binary-data/read-long" -> result = "i:" + dataCases.get(key).input.readLong();
+          case "binary-data/read-fully" -> {
+            var data = dataCases.get(key);
+            data.lastBuffer = ((byte[])values[0]).clone();
+            data.input.readFully(data.lastBuffer, intValue(values[1]), intValue(values[2]));
+            result = stringToken(HexFormat.of().formatHex(data.lastBuffer));
+          }
+          case "binary-data/write-byte" -> dataCases.get(key).output.writeByte(intValue(values[0]));
+          case "binary-data/write-short" -> dataCases.get(key).output.writeShort(intValue(values[0]));
+          case "binary-data/write-int" -> dataCases.get(key).output.writeInt(intValue(values[0]));
+          case "binary-data/write-long" -> dataCases.get(key).output.writeLong(longValue(values[0]));
+          case "binary-data/write-buffer" -> dataCases.get(key).output.write((byte[])values[0], intValue(values[1]), intValue(values[2]));
+          case "binary-data/flush" -> dataCases.get(key).output.flush();
           case "byte-array-input/open" -> {
             if (inputs.get(key) != null) inputs.get(key).stream.close();
             int offset = intValue(values[1]);
@@ -456,6 +574,12 @@ public final class JavaCompatOracle {
         exception = "null-pointer";
       } catch (java.nio.BufferUnderflowException error) {
         exception = "buffer-underflow";
+      } catch (java.nio.BufferOverflowException error) {
+        exception = "buffer-overflow";
+      } catch (java.nio.ReadOnlyBufferException error) {
+        exception = "read-only";
+      } catch (java.nio.InvalidMarkException error) {
+        exception = "invalid-mark";
       } catch (EOFException error) {
         exception = "eof";
       } catch (InvalidPathException error) {
@@ -471,12 +595,13 @@ public final class JavaCompatOracle {
       } catch (IOException error) {
         exception = "io";
       }
-      var buffer = buffers.get(key);
       var state = switch (fields[0]) {
         case "byte-array-input", "filter-input" -> inputState(inputs.get(key));
         case "byte-array-output", "filter-output" -> outputState(outputs.get(key));
         case "random-access" -> randomState(randoms.get(key));
-        default -> buffer == null ? "n:" : "i:" + buffer.position();
+        case "byte-buffer" -> bufferState(buffers.get(key));
+        case "binary-data" -> dataState(dataCases.get(key));
+        default -> "n:";
       };
       results.add(String.join("\t", fields[0], fields[1], fields[2], fields[3],
           exception, result, state));
@@ -485,6 +610,7 @@ public final class JavaCompatOracle {
       for (var stream : inputs.values()) stream.stream.close();
       for (var stream : outputs.values()) stream.stream.close();
       for (var random : randoms.values()) random.file.close();
+      for (var data : dataCases.values()) { data.input.close(); data.output.close(); }
       deleteTree(sandboxParent);
     }
     Files.writeString(output, String.join("\n", results) + "\n", StandardCharsets.UTF_8);

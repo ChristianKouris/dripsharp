@@ -54,7 +54,7 @@
     (is (= differential/observation-header
            (get-in contract [:observation :header])))
     (is (= 15 (count (get-in contract [:runtime :sources]))))
-    (is (= 177 (count provenance)))
+    (is (= 179 (count provenance)))
     (is (= (mapv :compat-type provenance)
            (vec (sort (map :compat-type provenance)))))
     (doseq [{:keys [compat-type jdk-contract targets proof-rows]}
@@ -73,11 +73,11 @@
     (is (= {:namespace "DripSharp.Runtime"
             :visibility :internal
             :sources 15
-            :types 177
+            :types 179
             :targets ["pdfcube" "pkl" "rawhttp" "sqltrellis"]}
            (:runtime summary)))
-    (is (= 199 (get-in summary [:trace :observations])))
+    (is (= 201 (get-in summary [:trace :observations])))
     (is (= ["behavior" "type-contract"]
            (get-in summary [:trace :families])))
-    (is (= {:matched 200} (:comparison summary)))
-    (is (= 201 (:perturbation-line summary)))))
+    (is (= {:matched 202} (:comparison summary)))
+    (is (= 203 (:perturbation-line summary)))))
