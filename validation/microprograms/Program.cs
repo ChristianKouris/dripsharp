@@ -47,6 +47,7 @@ internal static class Program
         IndexOutOfRangeException => "index-out-of-bounds",
         ArgumentOutOfRangeException => "index-out-of-bounds",
         NullReferenceException => "null-pointer",
+        InvalidCastException => "class-cast",
         ArgumentException => "illegal-argument",
         _ => throw error
     };

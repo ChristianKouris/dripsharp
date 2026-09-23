@@ -47,6 +47,7 @@ public final class MicroObserver {
         if (error instanceof ArithmeticException) return "arithmetic";
         if (error instanceof IndexOutOfBoundsException) return "index-out-of-bounds";
         if (error instanceof NullPointerException) return "null-pointer";
+        if (error instanceof ClassCastException) return "class-cast";
         if (error instanceof IllegalArgumentException) return "illegal-argument";
         throw error; // Unexpected exceptions are process failures, never parity.
     }

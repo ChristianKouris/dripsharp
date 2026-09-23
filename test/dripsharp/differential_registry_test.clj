@@ -34,6 +34,7 @@
     (doseq [live '[dripsharp.differential-generation-live
                    dripsharp.java-compat-cases-live
                    dripsharp.microprogram-live
+                   dripsharp.semantics-microprogram-live
                    dripsharp.floating-microprogram-live
                    dripsharp.numeric-microprogram-live
                    dripsharp.collection-microprogram-live]]
@@ -46,6 +47,8 @@
                    "dripsharp.differential-generation-live"
                    "dripsharp.java-compat-cases-live"
                    "dripsharp.microprogram-live"
+                   "dripsharp.semantics-microprogram-live"
+                   "dripsharp.semantics-microprogram"
                    "dripsharp.floating-microprogram-live"
                    "dripsharp.floating-microprogram"
                    "dripsharp.numeric-microprogram-live"

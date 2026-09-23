@@ -51,6 +51,7 @@
                  (or (nil? (:dotnet-consumer snapshot)) (string? (:dotnet-consumer snapshot)))
                  (<= (count (.getBytes (pr-str snapshot) "UTF-8")) (* 4 max-bytes))
                  (pos-int? (:java-release snapshot))
+                 (or (nil? (:isolate-cases? snapshot)) (boolean? (:isolate-cases? snapshot)))
                  (map? (:operations snapshot))
                  (seq (:operations snapshot)))
     (reject! "Invalid microprogram snapshot or batch exceeds size limits" {}))
@@ -82,7 +83,7 @@
     (doseq [row rows]
       (let [entry (get-in snapshot [:operations (:operation row)])]
         (when-not (and entry
-                       (contains? #{"none" "arithmetic" "index-out-of-bounds" "null-pointer" "illegal-argument"}
+                       (contains? #{"none" "arithmetic" "index-out-of-bounds" "null-pointer" "illegal-argument" "class-cast"}
                                   (:expected-exception row))
                        (= (count (:parameters entry)) (count (:arguments row)))
                        (every? true? (map typed-argument? (:parameters entry) (:arguments row))))
@@ -281,7 +282,20 @@
                                   (str/starts-with? dotnet-version ".NET 10."))
                      (throw (ex-info "Executed runtime differs from recorded contract" {:kind :runtime-contract})))
                  observe (fn [side command]
-                           (command! side 30000 (into command [(bindings side) (file "input.tsv") (file (str (name side) ".tsv"))])))
+                           (if (:isolate-cases? snapshot)
+                             (let [outputs
+                                   (mapv (fn [index row]
+                                           (let [input (file (str "isolated/" index ".tsv"))
+                                                 output (file (str "isolated/" index "-" (name side) ".tsv"))]
+                                             (util/write-text! input (cases/write-cases [row]))
+                                             (command! side 30000 (into command [(bindings side) input output]))
+                                             (let [text (slurp (str output))]
+                                               ;; Preserve the header check before assembling the batch.
+                                               (cases/read-observations text)
+                                               (rest (str/split-lines text))))) (range) rows)]
+                               (util/write-text! (file (str (name side) ".tsv"))
+                                                 (str (str/join "\n" (cons cases/output-header (mapcat identity outputs))) "\n")))
+                             (command! side 30000 (into command [(bindings side) (file "input.tsv") (file (str (name side) ".tsv"))]))))
                  _ (observe :java java-command)
                  _ (observe :dotnet dotnet-command)
                  _ (reset! phase :comparison)

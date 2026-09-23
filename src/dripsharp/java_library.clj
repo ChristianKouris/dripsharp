@@ -22,7 +22,7 @@
            [java.nio.file Files]
            [java.lang.reflect Method]
            [java.util Base64 IdentityHashMap WeakHashMap]
-           [spoon.reflect.code CtAbstractSwitch CtArrayRead CtArrayWrite CtAssert CtAssignment
+           [spoon.reflect.code CtAbstractInvocation CtAbstractSwitch CtArrayRead CtArrayWrite CtAssert CtAssignment
             CtBinaryOperator CtBlock CtBreak CtCase CtCatch CtCatchVariable CtComment
             CtConditional CtConstructorCall CtContinue CtDo CtExecutableReferenceExpression
             CtExpression CtFieldRead CtFieldWrite
@@ -2618,6 +2618,21 @@
             (type-node ctx resolved) (raw ">()")])
           node)))))
 
+(defn- nullable-boxed-call-argument?
+  [ctx ^CtExpression argument]
+  (let [parent (when (.isParentInitialized argument) (.getParent argument))]
+    (when (instance? CtAbstractInvocation parent)
+      (let [call ^CtAbstractInvocation parent
+            declaration (some-> call .getExecutable .getDeclaration)
+            index (first (keep-indexed #(when (identical? %2 argument) %1)
+                                      (.getArguments call)))
+            parameter (when (and (instance? CtExecutable declaration)
+                                 (not (.isShadow ^CtExecutable declaration))
+                                 (some? index))
+                        (nth (vec (.getParameters ^CtExecutable declaration)) index nil))]
+        (and parameter
+             (nullable-boxed-declaration? ctx parameter (.getType ^CtParameter parameter)))))))
+
 (defn- argument-value-node
   [ctx ^CtExpression argument ^CtTypeReference expected
    ^CtTypeReference declared-target-reference node force-value?]
@@ -2743,6 +2758,18 @@
                (sequence-node (mapv #(type-node ctx %) arguments) ", ")
                (raw ">")]))
            (raw "(") node (raw ")")]))
+
+       (and expected
+            (not force-value?)
+            (boxed-primitive-reference? expected)
+            (not (and (instance? CtLiteral argument)
+                      (nil? (.getValue ^CtLiteral argument))))
+            (nullable-boxed-call-argument? ctx argument))
+       ;; A proven non-null Java wrapper local may be emitted as a CLR value.
+       ;; Pin the resolved wrapper overload rather than rerunning C# overload
+       ;; selection between (for example) long and int?. Do not unbox null.
+       (sequence-node
+        [(raw "(") (type-node ctx expected) (raw "?)(") node (raw ")")])
 
        (and expected
             (not force-value?)
@@ -10486,6 +10513,34 @@
                      anonymous-types))
        "\n\n"))))
 
+(defn- superclass-initialization-node
+  [ctx ^CtType owner]
+  (when (and (instance? CtClass owner) (not (instance? CtEnum owner)))
+    (let [reference (.getSuperclass ^CtClass owner)
+          declaration (some-> reference .getTypeDeclaration)]
+      (when (and declaration (not (.isShadow ^CtType declaration)))
+        (sequence-node
+         [(raw "global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(")
+          (type-node ctx reference) (raw ").TypeHandle);")])))))
+
+(defn- static-initialization-nodes
+  [ctx ^CtType owner events]
+  (vec
+   (concat
+    (when-let [base (superclass-initialization-node ctx owner)] [base])
+    (map (fn [member]
+           (if (instance? CtField member)
+             (let [^CtField field member
+                   initializer (.getDefaultExpression field)]
+               (sequence-node
+                [(raw (str (destination-field-name ctx field) " = "))
+                 (assignment-value-node ctx field initializer (translated-node ctx initializer))
+                 (raw ";")]))
+             (csharp/with-source
+               (translated-node ctx (.getBody ^CtAnonymousExecutable member))
+               (source-ref member :java-library.declaration/static-initializer nil))))
+         events))))
+
 (defn- static-initializer-node
   [ctx ^CtType owner ^CtAnonymousExecutable initializer]
   (when-not (.hasModifier initializer ModifierKind/STATIC)
@@ -10510,12 +10565,8 @@
         (csharp/declaration
          (raw (str "static " name "()"))
          (csharp/block
-          (mapv
-           (fn [^CtAnonymousExecutable current]
-             (csharp/with-source
-               (translated-node ctx (.getBody current))
-               (source-ref current rule nil)))
-           initializers))
+          (static-initialization-nodes ctx owner
+                                       (or (:static-initialization-events ctx) initializers)))
          {:declaration-kind :static-constructor
           :name name
           :source-qualified-name (.getQualifiedName owner)})
@@ -11289,6 +11340,18 @@
         (some #(and (instance? CtType %)
                     (non-static-member-class? %))
               members)
+        derived-class?
+        (and (instance? CtClass type)
+             (some? (.getSuperclass ^CtClass type))
+             (not= "java.lang.Object" (.getQualifiedName (.getSuperclass ^CtClass type))))
+        static-initialization-events
+        (when (and (instance? CtClass type) (not (instance? CtEnum type)))
+          (filterv #(and (.hasModifier ^CtModifiable % ModifierKind/STATIC)
+                         (or (and (instance? CtField %)
+                                  (.getDefaultExpression ^CtField %)
+                                  (not (compile-time-constant-field? %)))
+                             (instance? CtAnonymousExecutable %))) members))
+        deferred-static-fields (filterv #(instance? CtField %) static-initialization-events)
         instance-initializers
         (->> members
              (filter #(and (instance? CtAnonymousExecutable %)
@@ -11300,7 +11363,8 @@
              (filter #(and (instance? CtField %)
                            (not (.hasModifier ^CtField % ModifierKind/STATIC))
                            (some? (.getDefaultExpression ^CtField %))
-                           (or (seq instance-initializers)
+                           (or derived-class?
+                               (seq instance-initializers)
                                nested-instance-class?
                                (initializer-uses-this? %)
                                (seq (field-anonymous-calls ctx %)))))
@@ -11358,11 +11422,22 @@
                     {:outer-type (when inner? (.getDeclaringType type))
                      :outer-field-name outer-field-name
                      :defer-field-initializers? (boolean (seq deferred-fields))
-                     :deferred-field-initializers deferred-fields
+                     :deferred-field-initializers (into deferred-fields deferred-static-fields)
+                     :static-initialization-events static-initialization-events
                      :instance-initialization-events initialization-events})
         member-nodes (if-let [emit-members (:emit-members ctx)]
                        (emit-members member-ctx type members)
                        (mapv #(member-node member-ctx type %) members))
+        member-nodes
+        (cond-> member-nodes
+          (and (or (seq static-initialization-events)
+                   (superclass-initialization-node member-ctx type))
+               (not-any? #(and (instance? CtAnonymousExecutable %)
+                               (.hasModifier ^CtModifiable % ModifierKind/STATIC)) members))
+          (conj (csharp/declaration
+                 (raw (str "static " name "()"))
+                 (csharp/block (static-initialization-nodes member-ctx type static-initialization-events))
+                 {:declaration-kind :static-constructor :name name})))
         abstract-covariant-bridge-hook-nodes
         (->> members
              (filter #(and (instance? CtMethod %)

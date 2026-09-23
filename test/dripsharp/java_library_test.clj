@@ -1670,9 +1670,12 @@
         source (slurp (str (paths/resolve-path (:project-root first)
                                                "src/Example/Java/Library/Factory.cs")))]
     (is (contains-csharp? source
-                          "public static readonly global::Example.Java.Library.Factory VALUE = global::Example.Java.Library.Factory.create().with(\"x\");"))
+                          "public static readonly global::Example.Java.Library.Factory VALUE;"))
     (is (contains-csharp? source
-                          "public static readonly global::System.Collections.Generic.IList<string> EMPTY = global::System.Array.Empty<string>();"))
+                          "public static readonly global::System.Collections.Generic.IList<string> EMPTY;"))
+    (is (contains-csharp? source "static Factory()"))
+    (is (contains-csharp? source "VALUE = global::Example.Java.Library.Factory.create().with(\"x\");"))
+    (is (contains-csharp? source "EMPTY = global::System.Array.Empty<string>();"))
     (is (= source
            (slurp (str (paths/resolve-path (:project-root second)
                                            "src/Example/Java/Library/Factory.cs")))))

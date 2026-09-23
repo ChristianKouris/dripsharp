@@ -104,6 +104,21 @@
   (let [{:keys [result]} (run-fake {:snapshot-change #(assoc-in % [:sources "subjects/micro/Numeric.java"] "changed source")})]
     (is (= "changed source" (get-in (read-edn (:snapshot result)) [:sources "subjects/micro/Numeric.java"])))))
 
+(deftest isolated-cases-share-builds-but-never-process-state
+  (let [{:keys [result calls snapshot]} (run-fake {:snapshot-change #(assoc % :isolate-cases? true)})
+        phases (frequencies (map :phase calls))
+        commands (fn [side] (map :command (filter #(= side (:phase %)) calls)))
+        inputs (fn [side] (map #(nth % (- (count %) 2)) (commands side)))]
+    (is (= :passed (:status result)))
+    (is (= 15 (:matched result)))
+    (is (= 1 (:translation phases) (:dotnet-build phases) (:java-compile phases)))
+    (is (= 15 (:java phases) (:dotnet phases)))
+    (is (= (inputs :java) (inputs :dotnet)))
+    (is (= 15 (count (distinct (inputs :java)))))
+    (is (= (cases/read-cases (:input snapshot))
+           (vec (mapcat #(cases/read-cases (slurp %)) (inputs :java)))))
+    (is (every? #(= 1 (count (cases/read-cases (slurp %)))) (inputs :java)))))
+
 (deftest accepted-templates-retain-failed-stages-and-never-count-as-behavior
   (doseq [[phase kind] [[:java-compile :command-failed]
                         [:translation :command-failed]
