@@ -44,6 +44,10 @@ public final class PdfBoxDocumentLifecycleOracle {
   private static Path exchange;
 
   public static void main(String[] args) throws Exception {
+    if (args.length == 5 && args[0].equals("--workflow")) {
+      WorkflowOracle.run(Arrays.copyOfRange(args, 1, args.length));
+      return;
+    }
     if (args.length != 2) {
       throw new IllegalArgumentException("Expected output trace and exchange directory.");
     }

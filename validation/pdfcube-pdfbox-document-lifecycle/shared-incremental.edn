@@ -1,0 +1,53 @@
+;; Fixed nested-tree/shared-resource incremental-save regression.
+{:version 1,
+ :seed 20,
+ :compression :none,
+ :title "Lifecycle",
+ :nested true,
+ :resources
+ [{:value "", :id "r0"}
+  {:value "", :id "r1"}
+  {:value "café-漢-😀", :id "r2"}],
+ :pages
+ [{:id "p0",
+   :resource "r0",
+   :width 477,
+   :height 264,
+   :compressed true,
+   :content
+   "q\n0 0 m\n10 10 l S\nQ\nBT /F1 12 Tf 20 60 Td (Page 0 seed 20) Tj ET\n"}
+  {:id "p1",
+   :resource "r1",
+   :width 219,
+   :height 288,
+   :compressed false,
+   :content
+   "q\n0 0 m\n10 10 l S\nQ\nBT /F1 12 Tf 20 60 Td (Page 1 seed 20) Tj ET\n"}
+  {:id "p2",
+   :resource "r2",
+   :width 330,
+   :height 291,
+   :compressed false,
+   :content
+   "q\n0 0 m\n10 10 l S\nQ\nBT /F1 12 Tf 20 60 Td (Page 2 seed 20) Tj ET\n"}
+  {:id "p3",
+   :resource "r0",
+   :width 210,
+   :height 388,
+   :compressed false,
+   :content
+   "q\n0 0 m\n10 10 l S\nQ\nBT /F1 12 Tf 20 60 Td (Page 3 seed 20) Tj ET\n"}],
+ :operations
+ [{:id "invalid-new", :op :invalid-incremental}
+  {:id "initial-save", :op :full}
+  {:id "initial-close", :op :close}
+  {:id "initial-load", :op :load}
+  {:id "noop-save", :op :full}
+  {:id "noop-close", :op :close}
+  {:id "noop-load", :op :load}
+  {:id "shared-edit", :op :shared, :target "r0", :value "updated 漢 😀"}
+  {:id "title-edit", :op :title, :value "revision 20 café"}
+  {:id "rotate-edit", :op :rotate, :target "p0", :value 180}
+  {:id "incremental-save", :op :incremental}
+  {:id "incremental-close", :op :close}
+  {:id "incremental-load", :op :load}]}

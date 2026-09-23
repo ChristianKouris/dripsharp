@@ -141,7 +141,9 @@
           (seq dependencies) (into ["-classpath" compile-classpath])
           true (into ["-d" (str classes)])
           true (into (map str sources))
-          true (conj (str oracle-source)))]
+          true (conj (str oracle-source)
+                     (str (paths/resolve-path root "validation" "pdfcube-pdfbox-document-lifecycle"
+                                              "WorkflowOracle.java"))))]
     (doseq [tool [java javac]]
       (when-not (paths/regular-file? tool)
         (fail! "Pinned Java oracle toolchain is missing"
@@ -172,6 +174,9 @@
     (Files/copy probe source
                 (into-array StandardCopyOption
                             [StandardCopyOption/REPLACE_EXISTING]))
+    (Files/copy (paths/resolve-path root "validation" "pdfcube-pdfbox-document-lifecycle" "WorkflowProbe.cs")
+                (paths/resolve-path consumer-root "WorkflowProbe.cs")
+                (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
     (run-command! {:command ["dotnet" "build" (str project)
                              "--nologo" "--verbosity:minimal"
                              "--no-restore" "--no-incremental" "-warnaserror"]

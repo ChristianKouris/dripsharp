@@ -21,6 +21,11 @@ internal static class Program
     {
         try
         {
+            if (args.Length == 5 && args[0] == "--workflow")
+            {
+                WorkflowProbe.Run(args.Skip(1).ToArray());
+                return 0;
+            }
             if (args.Length is < 2 or > 3)
                 throw new ArgumentException(
                     "Expected output trace, exchange directory, and optional --write-only.");
