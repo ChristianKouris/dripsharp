@@ -49,6 +49,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.zip.Adler32;
 import java.util.zip.CRC32;
 import java.util.zip.DeflaterOutputStream;
 import java.util.zip.InflaterOutputStream;
@@ -195,6 +196,13 @@ public final class JavaCompatOracle {
     }
   }
 
+  private static final class CompressionCase {
+    final ByteArrayOutputStream output = new ByteArrayOutputStream();
+    final List<Integer> outputAfterWrites = new ArrayList<Integer>();
+    String stage = "created";
+    boolean compareTiming = true;
+  }
+
   // Inputs are ASCII typed tokens, never JSON numbers or Unicode scalars.
   private static Object caseValue(String token) {
     if (token.equals("n:")) return null;
@@ -279,6 +287,71 @@ public final class JavaCompatOracle {
         data.lastBuffer == null ? "-" : HexFormat.of().formatHex(data.lastBuffer)));
   }
 
+  private static String compressionState(CompressionCase compression) {
+    if (compression == null) return "n:";
+    byte[] bytes = compression.output.toByteArray();
+    var adler = new Adler32();
+    adler.update(bytes);
+    var crc = new CRC32();
+    crc.update(bytes);
+    var values = new ArrayList<String>();
+    values.add(HexFormat.of().formatHex(bytes));
+    values.add(Long.toString(adler.getValue()));
+    values.add(Long.toString(crc.getValue()));
+    if (compression.compareTiming) {
+      values.add(compression.stage);
+      values.add(compression.outputAfterWrites.stream()
+          .map(String::valueOf).collect(java.util.stream.Collectors.joining(",")));
+    }
+    return stringToken(String.join("|", values));
+  }
+
+  private static byte[] runCompressionRoundTrip(
+      byte[] payload, int encodeChunk, int flushEvery, int decodeChunk,
+      String sequence, CompressionCase observation) throws IOException {
+    if (payload.length > 8192 || encodeChunk <= 0 || decodeChunk <= 0
+        || flushEvery < 0 || !(sequence.equals("close") || sequence.equals("flush-close")))
+      throw new IllegalArgumentException("Invalid bounded compression case");
+    observation.compareTiming = false;
+
+    var encoded = new ByteArrayOutputStream();
+    try (var compressor = new DeflaterOutputStream(encoded)) {
+      int writes = 0;
+      for (int offset = 0; offset < payload.length; offset += encodeChunk) {
+        int count = Math.min(encodeChunk, payload.length - offset);
+        compressor.write(payload, offset, count);
+        writes++;
+        if (flushEvery > 0 && writes % flushEvery == 0) compressor.flush();
+      }
+    }
+    return runCompressionDecode(
+        encoded.toByteArray(), decodeChunk, sequence, observation);
+  }
+
+  private static byte[] runCompressionDecode(
+      byte[] encoded, int chunk, String sequence, CompressionCase observation)
+      throws IOException {
+    if (encoded.length > 16384 || chunk <= 0
+        || !(sequence.equals("close") || sequence.equals("flush-close")))
+      throw new IllegalArgumentException("Invalid bounded compression case");
+
+    var inflater = new InflaterOutputStream(observation.output);
+    for (int offset = 0; offset < encoded.length; offset += chunk) {
+      observation.stage = "write-" + offset;
+      int count = Math.min(chunk, encoded.length - offset);
+      inflater.write(encoded, offset, count);
+      observation.outputAfterWrites.add(observation.output.size());
+      if (sequence.equals("flush-close")) {
+        observation.stage = "flush-" + offset;
+        inflater.flush();
+      }
+    }
+    observation.stage = "close";
+    inflater.close();
+    observation.stage = "closed";
+    return observation.output.toByteArray();
+  }
+
   private static String fileInspection(File file) {
     return String.join("\u0001",
         file.getPath(), file.getName(), file.getParent() == null ? "\u0002" : file.getParent(),
@@ -358,6 +431,8 @@ public final class JavaCompatOracle {
         case "binary-data/write-byte", "binary-data/write-short",
              "binary-data/write-int", "binary-data/write-long" -> 1;
         case "binary-data/read-fully", "binary-data/write-buffer" -> 3;
+        case "compression/roundtrip" -> 5;
+        case "compression/decode" -> 3;
         case "byte-array-input/open", "filter-input/open",
              "byte-array-input/read-buffer", "filter-input/read-buffer",
              "byte-array-output/write-buffer", "filter-output/write-buffer",
@@ -390,6 +465,8 @@ public final class JavaCompatOracle {
       // Domain validation occurs outside the observed operation's exception boundary.
       if (operation.equals("byte-buffer/wrap") && values[0] != null && !(values[0] instanceof byte[])
           || operation.equals("binary-data/open") && !(values[0] instanceof byte[])
+          || operation.startsWith("compression/")
+              && (!(values[0] instanceof byte[]) || !(values[values.length - 1] instanceof String))
           || operation.equals("string/hash") && values[0] != null && !(values[0] instanceof String)
           || operation.equals("long/hash") && !(values[0] instanceof java.math.BigInteger)
           || (operation.equals("byte-array-input/open") || operation.equals("filter-input/open"))
@@ -407,6 +484,7 @@ public final class JavaCompatOracle {
           values[i] = text.replace("$ROOT", caseRoot == null ? "$ROOT" : caseRoot.toString());
       var result = "n:";
       var exception = "none";
+      CompressionCase compressionCase = null;
       try {
         switch (operation) {
           case "floating/run" -> {
@@ -477,6 +555,18 @@ public final class JavaCompatOracle {
           case "binary-data/write-long" -> dataCases.get(key).output.writeLong(longValue(values[0]));
           case "binary-data/write-buffer" -> dataCases.get(key).output.write((byte[])values[0], intValue(values[1]), intValue(values[2]));
           case "binary-data/flush" -> dataCases.get(key).output.flush();
+          case "compression/roundtrip" -> {
+            compressionCase = new CompressionCase();
+            result = "b:" + HexFormat.of().formatHex(runCompressionRoundTrip(
+                (byte[])values[0], intValue(values[1]), intValue(values[2]),
+                intValue(values[3]), (String)values[4], compressionCase));
+          }
+          case "compression/decode" -> {
+            compressionCase = new CompressionCase();
+            result = "b:" + HexFormat.of().formatHex(runCompressionDecode(
+                (byte[])values[0], intValue(values[1]), (String)values[2],
+                compressionCase));
+          }
           case "byte-array-input/open" -> {
             if (inputs.get(key) != null) inputs.get(key).stream.close();
             int offset = intValue(values[1]);
@@ -615,6 +705,7 @@ public final class JavaCompatOracle {
         case "random-access" -> randomState(randoms.get(key));
         case "byte-buffer" -> bufferState(buffers.get(key));
         case "binary-data" -> dataState(dataCases.get(key));
+        case "compression" -> compressionState(compressionCase);
         default -> "n:";
       };
       results.add(String.join("\t", fields[0], fields[1], fields[2], fields[3],

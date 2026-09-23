@@ -455,6 +455,11 @@
                [operation {:arguments [] :exceptions #{"none" "null-pointer" "eof"}}]))
     (into {} (for [operation ["write-byte" "write-short" "write-int" "write-long"]]
                [operation {:arguments [#{"i"}] :exceptions #{"none" "null-pointer" "io"}}])))
+   "compression"
+   {"roundtrip" {:arguments [#{"b"} #{"i"} #{"i"} #{"i"} #{"u"}]
+                 :exceptions #{"none" "illegal-argument" "io"}}
+    "decode" {:arguments [#{"b"} #{"i"} #{"u"}]
+              :exceptions #{"none" "illegal-argument" "io"}}}
    "string" {"hash" {:arguments [#{"u" "n"}]
                      :exceptions #{"none" "null-pointer"}}}
    "long" {"hash" {:arguments [#{"i"}] :exceptions #{"none"}}}

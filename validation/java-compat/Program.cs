@@ -212,6 +212,14 @@ internal static class Program
         }
     }
 
+    private sealed class CompressionCase
+    {
+        internal MemoryStream Output { get; } = new();
+        internal string Stage { get; set; } = "created";
+        internal List<int> OutputAfterWrites { get; } = new();
+        internal bool CompareTiming { get; set; } = true;
+    }
+
     private static int Main(string[] arguments)
     {
         try
@@ -344,6 +352,85 @@ internal static class Program
             Hex(output), data.LastBuffer is null ? "-" : Hex(data.LastBuffer)));
     }
 
+    private static string CompressionState(CompressionCase? compression)
+    {
+        if (compression is null) return "n:";
+        var bytes = compression.Output.ToArray();
+        var signed = bytes.Select(value => unchecked((sbyte)value)).ToArray();
+        var crc = new JavaCrc32();
+        crc.Update(signed, 0, signed.Length);
+        var values = new List<string>
+        {
+            Hex(bytes), JavaZlib.Adler32(bytes).ToString(CultureInfo.InvariantCulture),
+            crc.GetValue().ToString(CultureInfo.InvariantCulture)
+        };
+        if (compression.CompareTiming)
+        {
+            values.Add(compression.Stage);
+            values.Add(string.Join(",", compression.OutputAfterWrites));
+        }
+        return StringToken(string.Join("|", values));
+    }
+
+    private static sbyte[] RunCompressionRoundTrip(
+        sbyte[] payload, int encodeChunk, int flushEvery, int decodeChunk,
+        string sequence, CompressionCase observation)
+    {
+        if (payload.Length > 8192 || encodeChunk <= 0 || decodeChunk <= 0 ||
+            flushEvery < 0 || sequence is not ("close" or "flush-close"))
+            throw new ArgumentException("Invalid bounded compression case");
+        observation.CompareTiming = false;
+
+        using var encoded = new MemoryStream();
+        var deflater = new JavaDeflater(JavaDeflater.DEFAULT_COMPRESSION);
+        using (var compressor = new JavaDeflaterOutputStream(encoded, deflater))
+        {
+            var writes = 0;
+            for (var offset = 0; offset < payload.Length; offset += encodeChunk)
+            {
+                var count = Math.Min(encodeChunk, payload.Length - offset);
+                compressor.Write(payload, offset, count);
+                writes++;
+                if (flushEvery > 0 && writes % flushEvery == 0)
+                    compressor.Flush();
+            }
+        }
+        deflater.End();
+        return RunCompressionDecode(
+            encoded.ToArray().Select(value => unchecked((sbyte)value)).ToArray(),
+            decodeChunk, sequence, observation);
+    }
+
+    private static sbyte[] RunCompressionDecode(
+        sbyte[] encoded, int chunk, string sequence, CompressionCase observation)
+    {
+        if (encoded.Length > 16384 || chunk <= 0 ||
+            sequence is not ("close" or "flush-close"))
+            throw new ArgumentException("Invalid bounded compression case");
+
+        var inflater = new JavaInflaterOutputStream(observation.Output);
+        for (var offset = 0; offset < encoded.Length; offset += chunk)
+        {
+            observation.Stage = "write-" + offset.ToString(CultureInfo.InvariantCulture);
+            var count = Math.Min(chunk, encoded.Length - offset);
+            var bytes = encoded
+                .Skip(offset).Take(count)
+                .Select(value => unchecked((byte)value)).ToArray();
+            inflater.Write(bytes, 0, bytes.Length);
+            observation.OutputAfterWrites.Add(checked((int)observation.Output.Length));
+            if (sequence == "flush-close")
+            {
+                observation.Stage = "flush-" + offset.ToString(CultureInfo.InvariantCulture);
+                inflater.Flush();
+            }
+        }
+        observation.Stage = "close";
+        inflater.Dispose();
+        observation.Stage = "closed";
+        return observation.Output.ToArray()
+            .Select(value => unchecked((sbyte)value)).ToArray();
+    }
+
     private static string FileInspection(JavaFile file) => string.Join("\u0001",
         file.Pathname, file.Name, file.Parent ?? "\u0002",
         file.IsAbsolute.ToString().ToLowerInvariant(), file.Exists.ToString().ToLowerInvariant(),
@@ -421,6 +508,8 @@ internal static class Program
                     "binary-data/write-byte" or "binary-data/write-short" or
                     "binary-data/write-int" or "binary-data/write-long" => 1,
                     "binary-data/read-fully" or "binary-data/write-buffer" => 3,
+                    "compression/roundtrip" => 5,
+                    "compression/decode" => 3,
                     "byte-array-input/open" => 3,
                     "filter-input/open" => 3,
                     "byte-array-input/read-buffer" or "filter-input/read-buffer" => 3,
@@ -455,6 +544,8 @@ internal static class Program
                 var values = fields.Skip(5).Select(CaseValue).ToArray();
                 if (operation == "byte-buffer/wrap" && values[0] is not null and not sbyte[] ||
                     operation == "binary-data/open" && values[0] is not sbyte[] ||
+                    operation.StartsWith("compression/", StringComparison.Ordinal) &&
+                    (values[0] is not sbyte[] || values[^1] is not string) ||
                     operation == "charset/decode" &&
                     (values[0] is not string || values[1] is not System.Numerics.BigInteger ||
                      values[2] is not string) ||
@@ -484,6 +575,7 @@ internal static class Program
                 inputs.TryGetValue(key, out var inputCase);
                 outputs.TryGetValue(key, out var outputCase);
                 randoms.TryGetValue(key, out var randomCase);
+                CompressionCase? compressionCase = null;
                 try
                 {
                     switch (operation)
@@ -559,6 +651,18 @@ internal static class Program
                         case "binary-data/write-long": dataCase!.Output.writeLong(LongValue(values[0])); break;
                         case "binary-data/write-buffer": dataCase!.Output.write((sbyte[])values[0]!, IntValue(values[1]), IntValue(values[2])); break;
                         case "binary-data/flush": dataCase!.Output.flush(); break;
+                        case "compression/roundtrip":
+                            compressionCase = new CompressionCase();
+                            result = "b:" + Hex(RunCompressionRoundTrip(
+                                (sbyte[])values[0]!, IntValue(values[1]), IntValue(values[2]),
+                                IntValue(values[3]), (string)values[4]!, compressionCase));
+                            break;
+                        case "compression/decode":
+                            compressionCase = new CompressionCase();
+                            result = "b:" + Hex(RunCompressionDecode(
+                                (sbyte[])values[0]!, IntValue(values[1]),
+                                (string)values[2]!, compressionCase));
+                            break;
                         case "byte-array-input/open":
                             inputCase?.Stream.Dispose();
                             inputs[key] = inputCase = new InputCase(JavaCompat.NewMemoryStream(
@@ -737,6 +841,7 @@ internal static class Program
                 catch (IndexOutOfRangeException) { exception = "index-out-of-bounds"; }
                 catch (ArgumentOutOfRangeException) { exception = operation is "byte-buffer/set-position" or "byte-buffer/set-limit" ? "illegal-argument" : "index-out-of-bounds"; }
                 catch (ArgumentException) { exception = operation == "file/to-path" ? "invalid-path" : "illegal-argument"; }
+                catch (InvalidDataException) { exception = "io"; }
                 catch (IOException) { exception = "io"; }
                 var state = fields[0] switch
                 {
@@ -745,6 +850,7 @@ internal static class Program
                     "random-access" => RandomState(randomCase),
                     "byte-buffer" => BufferState(buffer),
                     "binary-data" => DataState(dataCase),
+                    "compression" => CompressionState(compressionCase),
                     _ => "n:"
                 };
                 results.Add(string.Join("\t", fields[0], fields[1], fields[2], fields[3],

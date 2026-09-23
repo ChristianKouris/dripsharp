@@ -7,7 +7,8 @@
             [dripsharp.harness :as harness]
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.target-execution :as target-execution])
   (:import [java.io File]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path StandardCopyOption]
@@ -18,8 +19,9 @@
 
 (def required-trace-families
   #{"byte-invariant" "cos-equality" "cos-identity" "cos-lifecycle"
-    "cos-mutation" "cos-traversal" "cross-reopen" "filter-error"
-    "filter-factory" "filter-predictor" "filter-roundtrip"
+    "cos-mutation" "cos-traversal" "cross-reopen" "filter-campaign"
+    "filter-cross-runtime" "filter-error" "filter-factory"
+    "filter-malformed" "filter-predictor" "filter-roundtrip"
     "parser-encryption" "parser-fixture" "parser-lenient"
     "parser-object-stream" "parser-recovery" "parser-strict" "writer-full"
     "writer-incremental" "writer-xref"})
@@ -181,18 +183,53 @@
                    :directory consumer-root
                    :timeout-ms 300000})))
 
+(defn- run-project-probe!
+  [run-command! ^Path root ^Path output
+   ^Path resources ^Path exchange mode]
+  (let [consumer-root (paths/resolve-path root "validation" "pdfcube-pdfbox")
+        project (paths/resolve-path
+                 consumer-root "DripSharp.PdfCarton.LowLevelProbe.csproj")
+        arguments
+        (cond-> [(str output) (str resources) (str exchange)]
+          mode (conj mode))]
+    (run-command! {:command ["dotnet" "build" (str project)
+                             "--nologo" "--verbosity:minimal"
+                             "--no-incremental"
+                             "-p:RestoreIgnoreFailedSources=true"
+                             "-warnaserror"]
+                   :directory consumer-root
+                   :timeout-ms 300000})
+    (run-command! {:command
+                   (into ["dotnet" "run" "--project" (str project)
+                          "--no-build" "--no-restore" "--"]
+                         arguments)
+                   :directory consumer-root
+                   :timeout-ms 300000})))
+
+(defn- verify-generated-project!
+  [options]
+  {:verification
+   (target-execution/verify! (assoc options :target :pdfcube))})
+
 (defn verify!
-  "Runs clean deterministic packaging, independent package consumption, and
-  normalized low-level Java/.NET differential validation for DripSharp.PdfCarton."
+  "Runs clean deterministic packaging and normalized low-level Java/.NET
+  differential validation. The explicit :generated-project boundary retains a
+  local public-project replay when product-repository publication is pending."
   ([] (verify! {}))
-  ([{:keys [workspace-root package-fn run-command!]
+  ([{:keys [workspace-root package-fn run-command! boundary]
      :or {package-fn packaging/verify-package-consumption!
+          boundary :package
           run-command! process/run!}}]
+   (when-not (contains? #{:package :generated-project} boundary)
+     (fail! "Low-level PDFBox differential boundary is unsupported"
+            {:boundary boundary :supported [:package :generated-project]}))
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
+         project-probe? (= :generated-project boundary)
          package-proof
-         (package-fn {:workspace-root root
-                      :profile "pdfcube-pdfbox"
-                      :run-command! run-command!})
+         ((if project-probe? verify-generated-project! package-fn)
+          {:workspace-root root
+           :profile "pdfcube-pdfbox"
+           :run-command! run-command!})
          generation (get-in package-proof [:verification :generation])
          proof-root
          (harness/clean-directory!
@@ -209,23 +246,39 @@
      (when-not (paths/directory? resources)
        (fail! "Authoritative PDFBox test resources are missing"
               {:resources (str resources)}))
-     (run-package-probe!
-      run-command! root package-proof dotnet-trace resources exchange
-      "--write-only")
+     (if project-probe?
+       (run-project-probe!
+        run-command! root dotnet-trace resources exchange "--write-only")
+       (run-package-probe!
+        run-command! root package-proof dotnet-trace resources exchange
+        "--write-only"))
      (compile-and-run-oracle!
       run-command! root generation proof-root java-trace resources exchange)
-     (run-package-probe!
-      run-command! root package-proof dotnet-trace resources exchange nil)
+     (if project-probe?
+       (run-project-probe!
+        run-command! root dotnet-trace resources exchange nil)
+       (run-package-probe!
+        run-command! root package-proof dotnet-trace resources exchange nil))
      (let [comparison (assert-match! java-trace dotnet-trace)
            trace (trace-summary java-trace)
            summary
            {:profile "pdfcube-pdfbox"
             :source {:version (baseline/upstream-version :pdfcube) :revision pinned-revision}
             :package
-            {:id (get-in package-proof [:identity :id])
-             :version (get-in package-proof [:identity :version])
-             :sha256 (get-in package-proof [:identity :sha256])}
-            :consumer (:dependency-proof package-proof)
+            (if project-probe?
+              {:id (get-in generation [:destination :package :id])
+               :version (get-in generation [:destination :package :version])
+               :boundary :generated-project}
+              {:id (get-in package-proof [:identity :id])
+               :version (get-in package-proof [:identity :version])
+               :sha256 (get-in package-proof [:identity :sha256])
+               :boundary :nuget})
+            :consumer
+            (if project-probe?
+              {:strategy :public-project-reference
+               :project "validation/pdfcube-pdfbox/DripSharp.PdfCarton.LowLevelProbe.csproj"
+               :target-framework "net10.0"}
+              (:dependency-proof package-proof))
             :trace trace
             :comparison comparison
             :proof-root proof-root}]

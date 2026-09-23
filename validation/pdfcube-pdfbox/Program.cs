@@ -20,6 +20,44 @@ internal static class Program
     private static string resources = null!;
     private static string exchange = null!;
 
+    private sealed record CompressionPayload(string Id, byte[] Bytes, int Chunk);
+
+    private sealed class ChunkedInputStream : Stream
+    {
+        private readonly MemoryStream input;
+        private readonly int chunk;
+
+        internal ChunkedInputStream(byte[] bytes, int chunk)
+        {
+            input = new MemoryStream(bytes, writable: false);
+            this.chunk = chunk;
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => input.Length;
+        public override long Position
+        {
+            get => input.Position;
+            set => throw new NotSupportedException();
+        }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) =>
+            input.Read(buffer, offset, Math.Min(chunk, count));
+        public override int ReadByte() => input.ReadByte();
+        public override long Seek(long offset, SeekOrigin origin) =>
+            throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) input.Dispose();
+            base.Dispose(disposing);
+        }
+    }
+
     private static int Main(string[] args)
     {
         try
@@ -297,6 +335,9 @@ internal static class Program
                         new MemoryStream(),
                         new COSDictionary(),
                         0))));
+
+        WriteCompressionStreams("dotnet");
+        ObserveMalformedFlate();
     }
 
     private static void ObservePredictors()
@@ -329,6 +370,17 @@ internal static class Program
             [4],
             EncodePngRow(second, first, 4));
         ObservePredictor(15, 8, 5, adaptive, Concat(first, second));
+
+        var boundaryFirst = GeneratedBytes(1025, 0x5eedu);
+        var boundarySecond = GeneratedBytes(1025, 0xc0ffeeu);
+        var boundaryAdaptive = Concat(
+            [0],
+            EncodePngRow(boundaryFirst, null, 0),
+            [4],
+            EncodePngRow(boundarySecond, boundaryFirst, 4));
+        ObservePredictor(
+            15, 8, 1025, boundaryAdaptive,
+            Concat(boundaryFirst, boundarySecond));
     }
 
     private static void ObservePredictor(
@@ -353,7 +405,7 @@ internal static class Program
         var actualBytes = actual.ToArray();
         Observe(
             "filter-predictor",
-            $"{predictor}-bpc-{bits}",
+            $"{predictor}-bpc-{bits}-columns-{columns}",
             Join(Hex(expected), Hex(actualBytes), expected.SequenceEqual(actualBytes)));
     }
 
@@ -508,6 +560,107 @@ internal static class Program
         Observe("cross-reopen", "other-full", InspectPdf(full));
         Observe("cross-reopen", "other-compressed", InspectPdf(compressed));
         Observe("cross-reopen", "other-incremental", InspectPdf(incremental));
+        var flate = FilterFactory.Instance.GetFilter(COSName.FlateDecode);
+        foreach (var payload in CompressionPayloads())
+        {
+            var encoded = Path.Combine(
+                exchange, implementation + "-flate-" + payload.Id + ".bin");
+            if (!File.Exists(encoded))
+                throw new IOException("Missing cross-runtime Flate output " + encoded);
+            using var input = File.OpenRead(encoded);
+            using var decoded = new MemoryStream();
+            flate.Decode(input, decoded, new COSDictionary(), 0);
+            var actual = decoded.ToArray();
+            Observe(
+                "filter-cross-runtime",
+                payload.Id,
+                Join(
+                    payload.Bytes.Length,
+                    Sha256(payload.Bytes),
+                    payload.Bytes.SequenceEqual(actual),
+                    Sha256(actual)));
+        }
+    }
+
+    private static void WriteCompressionStreams(string implementation)
+    {
+        var flate = FilterFactory.Instance.GetFilter(COSName.FlateDecode);
+        var payloads = CompressionPayloads();
+        foreach (var payload in payloads)
+        {
+            var encoded = Path.Combine(
+                exchange, implementation + "-flate-" + payload.Id + ".bin");
+            using var input = new ChunkedInputStream(payload.Bytes, payload.Chunk);
+            using var output = File.Create(encoded);
+            flate.Encode(input, output, new COSDictionary(), 0);
+        }
+        Observe(
+            "filter-campaign",
+            "compression-payloads",
+            Join("compression-v1", "seed-5eed", payloads.Count, 1025));
+    }
+
+    private static List<CompressionPayload> CompressionPayloads()
+    {
+        var payloads = new List<CompressionPayload>
+        {
+            new("empty", [], 1),
+            new("repeated-257", Enumerable.Repeat((byte)0xa5, 257).ToArray(), 7),
+            new("incompressible-511", GeneratedBytes(511, 0x5eedu), 64)
+        };
+        var highBit = new byte[128];
+        for (var index = 0; index < highBit.Length; index++)
+            highBit[index] = unchecked((byte)(0x80 + ((index * 73) & 0x7f)));
+        payloads.Add(new CompressionPayload("high-bit-128", highBit, 13));
+        foreach (var length in new[] { 1023, 1024, 1025 })
+        {
+            payloads.Add(new CompressionPayload(
+                "boundary-" + length.ToString(CultureInfo.InvariantCulture),
+                GeneratedBytes(length, 0x5eedu), length == 1024 ? 1 : 257));
+        }
+        return payloads;
+    }
+
+    private static byte[] GeneratedBytes(int length, uint seed)
+    {
+        var bytes = new byte[length];
+        var state = seed;
+        for (var index = 0; index < bytes.Length; index++)
+        {
+            state = unchecked(state * 1664525u + 1013904223u);
+            bytes[index] = unchecked((byte)(state >> 24));
+        }
+        return bytes;
+    }
+
+    private static void ObserveMalformedFlate()
+    {
+        var valid = Convert.FromHexString(
+            "789c4bcecf2d284a2d2ececccfd34dca2fcd4b492caa4c1ee462004c784a5c");
+        var truncated = valid[..^1];
+        var checksum = (byte[])valid.Clone();
+        checksum[^1] ^= 1;
+        var corrupted = (byte[])valid.Clone();
+        corrupted[corrupted.Length / 2] ^= 0x20;
+        ObserveFlateFailure("valid", valid);
+        ObserveFlateFailure("truncated-checksum", truncated);
+        ObserveFlateFailure("corrupt-checksum", checksum);
+        ObserveFlateFailure("corrupt-deflate", corrupted);
+    }
+
+    private static void ObserveFlateFailure(string id, byte[] encoded)
+    {
+        var flate = FilterFactory.Instance.GetFilter(COSName.FlateDecode);
+        using var decoded = new MemoryStream();
+        var failure = FailureKind(() =>
+        {
+            using var input = new MemoryStream(encoded, writable: false);
+            flate.Decode(input, decoded, new COSDictionary(), 0);
+        });
+        Observe(
+            "filter-malformed",
+            id,
+            Join(failure, decoded.Length, Sha256(decoded.ToArray())));
     }
 
     private static PDDocument Parse(byte[] bytes, bool lenient)

@@ -81,6 +81,24 @@
     (is (contains? identities ["random-access" "boundaries" "read-fully" "eof"]))
     (is (contains? identities ["random-access" "read-only" "write-buffer" "io"]))))
 
+(deftest compression-cases-cover-payload-chunk-and-failure-contracts
+  (let [text (slurp "validation/java-compat/cases.tsv")
+        rows (java-compat/select-cases text {:family "compression"})
+        identities (set (map (juxt :case :operation :expected-exception) rows))]
+    (is (= 12 (count rows)))
+    (is (every? identities
+                [["empty" "roundtrip" "none"]
+                 ["repeated-257" "roundtrip" "none"]
+                 ["incompressible-seed-5eed-v1" "roundtrip" "none"]
+                 ["high-bit-128" "roundtrip" "none"]
+                 ["boundary-255" "roundtrip" "none"]
+                 ["boundary-256" "roundtrip" "none"]
+                 ["boundary-257" "roundtrip" "none"]
+                 ["boundary-1025" "roundtrip" "none"]
+                 ["truncated-zlib-v1" "decode" "none"]
+                 ["checksum-corrupt-zlib-v1" "decode" "io"]
+                 ["payload-corrupt-zlib-v1" "decode" "io"]]))))
+
 (deftest comparator-requires-values-state-and-exception-timing
   (is (= {:status :passed :matched 3} (compare-output output)))
   (doseq [actual [(str/replace output "i:-1" "i:255")

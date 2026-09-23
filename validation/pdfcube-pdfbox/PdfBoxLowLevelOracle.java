@@ -54,6 +54,50 @@ public final class PdfBoxLowLevelOracle {
 
   private PdfBoxLowLevelOracle() {}
 
+  private static final class CompressionPayload {
+    private final String id;
+    private final byte[] bytes;
+    private final int chunk;
+
+    CompressionPayload(String id, byte[] bytes, int chunk) {
+      this.id = id;
+      this.bytes = bytes;
+      this.chunk = chunk;
+    }
+
+    String id() {
+      return id;
+    }
+
+    byte[] bytes() {
+      return bytes;
+    }
+
+    int chunk() {
+      return chunk;
+    }
+  }
+
+  private static final class ChunkedInputStream extends InputStream {
+    private final ByteArrayInputStream input;
+    private final int chunk;
+
+    ChunkedInputStream(byte[] bytes, int chunk) {
+      this.input = new ByteArrayInputStream(bytes);
+      this.chunk = chunk;
+    }
+
+    @Override
+    public int read() {
+      return input.read();
+    }
+
+    @Override
+    public int read(byte[] buffer, int offset, int length) {
+      return input.read(buffer, offset, Math.min(chunk, length));
+    }
+  }
+
   public static void main(String[] args) throws Exception {
     if (args.length != 3) {
       throw new IllegalArgumentException(
@@ -335,7 +379,10 @@ public final class PdfBoxLowLevelOracle {
                             new ByteArrayInputStream(new byte[0]),
                             new ByteArrayOutputStream(),
                             new COSDictionary(),
-                            0))));
+                        0))));
+
+    writeCompressionStreams("java");
+    observeMalformedFlate();
   }
 
   private static void observePredictors() throws Exception {
@@ -368,6 +415,18 @@ public final class PdfBoxLowLevelOracle {
             new byte[] {4},
             encodePngRow(second, first, 4));
     observePredictor(15, 8, 5, adaptive, concat(first, second));
+
+    byte[] boundaryFirst = generatedBytes(1025, 0x5eedL);
+    byte[] boundarySecond = generatedBytes(1025, 0xc0ffeeL);
+    byte[] boundaryAdaptive =
+        concat(
+            new byte[] {0},
+            encodePngRow(boundaryFirst, null, 0),
+            new byte[] {4},
+            encodePngRow(boundarySecond, boundaryFirst, 4));
+    observePredictor(
+        15, 8, 1025, boundaryAdaptive,
+        concat(boundaryFirst, boundarySecond));
   }
 
   private static void observePredictor(
@@ -393,7 +452,7 @@ public final class PdfBoxLowLevelOracle {
         new ByteArrayInputStream(compressed.toByteArray()), actual, parameters, 0);
     observe(
         "filter-predictor",
-        predictor + "-bpc-" + bits,
+        predictor + "-bpc-" + bits + "-columns-" + columns,
         join(hex(expected), hex(actual.toByteArray()), Arrays.equals(expected, actual.toByteArray())));
   }
 
@@ -537,6 +596,108 @@ public final class PdfBoxLowLevelOracle {
     observe("cross-reopen", "other-full", inspectPdf(full));
     observe("cross-reopen", "other-compressed", inspectPdf(compressed));
     observe("cross-reopen", "other-incremental", inspectPdf(incremental));
+    Filter flate = FilterFactory.INSTANCE.getFilter(COSName.FLATE_DECODE);
+    for (CompressionPayload payload : compressionPayloads()) {
+      Path encoded =
+          exchange.resolve(implementation + "-flate-" + payload.id() + ".bin");
+      if (!Files.isRegularFile(encoded)) {
+        throw new IOException("Missing cross-runtime Flate output " + encoded);
+      }
+      ByteArrayOutputStream decoded = new ByteArrayOutputStream();
+      flate.decode(
+          Files.newInputStream(encoded), decoded, new COSDictionary(), 0);
+      byte[] actual = decoded.toByteArray();
+      observe(
+          "filter-cross-runtime",
+          payload.id(),
+          join(
+              payload.bytes().length,
+              sha256(payload.bytes()),
+              Arrays.equals(payload.bytes(), actual),
+              sha256(actual)));
+    }
+  }
+
+  private static void writeCompressionStreams(String implementation)
+      throws Exception {
+    Filter flate = FilterFactory.INSTANCE.getFilter(COSName.FLATE_DECODE);
+    List<CompressionPayload> payloads = compressionPayloads();
+    for (CompressionPayload payload : payloads) {
+      Path encoded =
+          exchange.resolve(implementation + "-flate-" + payload.id() + ".bin");
+      try (InputStream input =
+              new ChunkedInputStream(payload.bytes(), payload.chunk());
+          OutputStream output = Files.newOutputStream(encoded)) {
+        flate.encode(input, output, new COSDictionary(), 0);
+      }
+    }
+    observe(
+        "filter-campaign",
+        "compression-payloads",
+        join("compression-v1", "seed-5eed", payloads.size(), 1025));
+  }
+
+  private static List<CompressionPayload> compressionPayloads() {
+    List<CompressionPayload> payloads = new ArrayList<CompressionPayload>();
+    payloads.add(new CompressionPayload("empty", new byte[0], 1));
+    byte[] repeated = new byte[257];
+    Arrays.fill(repeated, (byte) 0xa5);
+    payloads.add(new CompressionPayload("repeated-257", repeated, 7));
+    payloads.add(
+        new CompressionPayload(
+            "incompressible-511", generatedBytes(511, 0x5eedL), 64));
+    byte[] highBit = new byte[128];
+    for (int index = 0; index < highBit.length; index++) {
+      highBit[index] = (byte) (0x80 + ((index * 73) & 0x7f));
+    }
+    payloads.add(new CompressionPayload("high-bit-128", highBit, 13));
+    for (int length : new int[] {1023, 1024, 1025}) {
+      payloads.add(
+          new CompressionPayload(
+              "boundary-" + length, generatedBytes(length, 0x5eedL),
+              length == 1024 ? 1 : 257));
+    }
+    return payloads;
+  }
+
+  private static byte[] generatedBytes(int length, long seed) {
+    byte[] bytes = new byte[length];
+    long state = seed & 0xffffffffL;
+    for (int index = 0; index < bytes.length; index++) {
+      state = (state * 1664525L + 1013904223L) & 0xffffffffL;
+      bytes[index] = (byte) (state >>> 24);
+    }
+    return bytes;
+  }
+
+  private static void observeMalformedFlate() throws Exception {
+    byte[] valid =
+        parseHex(
+            "789c4bcecf2d284a2d2ececccfd34dca2fcd4b492caa4c1ee462004c784a5c");
+    byte[] truncated = Arrays.copyOf(valid, valid.length - 1);
+    byte[] checksum = valid.clone();
+    checksum[checksum.length - 1] ^= 1;
+    byte[] corrupted = valid.clone();
+    corrupted[corrupted.length / 2] ^= 0x20;
+    observeFlateFailure("valid", valid);
+    observeFlateFailure("truncated-checksum", truncated);
+    observeFlateFailure("corrupt-checksum", checksum);
+    observeFlateFailure("corrupt-deflate", corrupted);
+  }
+
+  private static void observeFlateFailure(String id, byte[] encoded)
+      throws Exception {
+    Filter flate = FilterFactory.INSTANCE.getFilter(COSName.FLATE_DECODE);
+    ByteArrayOutputStream decoded = new ByteArrayOutputStream();
+    String failure =
+        failureKind(
+            () ->
+                flate.decode(
+                    new ByteArrayInputStream(encoded), decoded,
+                    new COSDictionary(), 0));
+    observe(
+        "filter-malformed", id,
+        join(failure, decoded.size(), sha256(decoded.toByteArray())));
   }
 
   private static PDDocument parse(byte[] bytes, boolean lenient) throws Exception {
@@ -723,6 +884,16 @@ public final class PdfBoxLowLevelOracle {
 
   private static String sha256(byte[] bytes) throws Exception {
     return hex(MessageDigest.getInstance("SHA-256").digest(bytes));
+  }
+
+  private static byte[] parseHex(String value) {
+    byte[] bytes = new byte[value.length() / 2];
+    for (int index = 0; index < bytes.length; index++) {
+      int offset = index * 2;
+      bytes[index] =
+          (byte) Integer.parseInt(value.substring(offset, offset + 2), 16);
+    }
+    return bytes;
   }
 
   private static String hex(byte[] bytes) {

@@ -646,27 +646,110 @@ internal sealed class JavaBitSet
 
 internal static class JavaZlib
 {
+    private static readonly Type? ZLibStreamType =
+        Type.GetType("System.IO.Compression.ZLibStream, System.IO.Compression");
+
+    internal static byte[] DecompressAvailable(MemoryStream compressed)
+    {
+        var result = DecompressAvailable(compressed, out var failure);
+        if (failure is not null) throw failure;
+        return result;
+    }
+
+    internal static byte[] DecompressAvailable(
+        MemoryStream compressed, out InvalidDataException? failure)
+    {
+        var bytes = compressed.ToArray();
+        failure = null;
+        if (bytes.Length < 2) return Array.Empty<byte>();
+        ValidateHeader(bytes);
+        if (ZLibStreamType is not null)
+        {
+            using var input = new MemoryStream(bytes, writable: false);
+            using var inflater = (Stream)Activator.CreateInstance(
+                ZLibStreamType,
+                new object[] { input, CompressionMode.Decompress, true })!;
+            using var decoded = new MemoryStream();
+            try
+            {
+                inflater.CopyTo(decoded);
+            }
+            catch (InvalidDataException error)
+            {
+                failure = error;
+            }
+            return decoded.ToArray();
+        }
+        return DecompressRaw(bytes, bytes.Length - 2);
+    }
+
     internal static byte[] Decompress(MemoryStream compressed)
     {
         var bytes = compressed.ToArray();
-        if (bytes.Length < 6)
+        if (bytes.Length < 2)
             throw new InvalidDataException("The zlib stream is incomplete.");
-        var header = (bytes[0] << 8) | bytes[1];
-        if ((bytes[0] & 0x0f) != 8 || header % 31 != 0 || (bytes[1] & 0x20) != 0)
-            throw new InvalidDataException("The zlib stream header is invalid.");
+        var result = DecompressAvailable(compressed, out var failure);
+        if (failure is not null) throw failure;
+        if (ZLibStreamType is null)
+            ValidateChecksum(bytes, result, final: true);
+        return result;
+    }
 
-        using var payload = new MemoryStream(bytes, 2, bytes.Length - 6, writable: false);
+    internal static void ValidateChecksumIfPresent(
+        MemoryStream compressed, byte[] result)
+    {
+        if (ZLibStreamType is null)
+            ValidateChecksum(compressed.ToArray(), result, final: false);
+    }
+
+    private static void ValidateChecksum(byte[] bytes, byte[] result, bool final)
+    {
+        var actual = Adler32(result);
+        var trailer = new[]
+        {
+            (byte)(actual >> 24), (byte)(actual >> 16),
+            (byte)(actual >> 8), (byte)actual
+        };
+        var trailerCandidate = false;
+        for (var length = 4; length >= 1; length--)
+        {
+            if (bytes.Length < 2 + length) continue;
+            byte[] prefix;
+            try
+            {
+                prefix = DecompressRaw(bytes, bytes.Length - 2 - length);
+            }
+            catch (InvalidDataException)
+            {
+                continue;
+            }
+            if (!prefix.AsSpan().SequenceEqual(result)) continue;
+            trailerCandidate = true;
+            if (bytes.AsSpan(bytes.Length - length, length)
+                .SequenceEqual(trailer.AsSpan(0, length)))
+                return;
+        }
+        if (trailerCandidate &&
+            (final || (bytes.Length >= 4 &&
+                bytes.AsSpan(bytes.Length - 4, 3)
+                    .SequenceEqual(trailer.AsSpan(0, 3)))))
+            throw new InvalidDataException("The zlib stream checksum is invalid.");
+    }
+
+    private static byte[] DecompressRaw(byte[] bytes, int count)
+    {
+        using var payload = new MemoryStream(bytes, 2, count, writable: false);
         using var inflater = new DeflateStream(payload, CompressionMode.Decompress);
         using var decoded = new MemoryStream();
         inflater.CopyTo(decoded);
-        var result = decoded.ToArray();
-        var expected = ((uint)bytes[bytes.Length - 4] << 24) |
-                       ((uint)bytes[bytes.Length - 3] << 16) |
-                       ((uint)bytes[bytes.Length - 2] << 8) |
-                       bytes[bytes.Length - 1];
-        if (Adler32(result) != expected)
-            throw new InvalidDataException("The zlib stream checksum is invalid.");
-        return result;
+        return decoded.ToArray();
+    }
+
+    private static void ValidateHeader(byte[] bytes)
+    {
+        var header = (bytes[0] << 8) | bytes[1];
+        if ((bytes[0] & 0x0f) != 8 || header % 31 != 0 || (bytes[1] & 0x20) != 0)
+            throw new InvalidDataException("The zlib stream header is invalid.");
     }
 
     internal static uint Adler32(byte[] bytes)
@@ -772,27 +855,57 @@ internal sealed class JavaInflaterOutputStream : Stream
 
     public override void Flush()
     {
-        var position = compressed.Position;
-        var bytes = JavaZlib.Decompress(compressed);
-        if (bytes.Length > emitted)
-            destination.Write(bytes, emitted, bytes.Length - emitted);
-        emitted = bytes.Length;
-        compressed.Position = position;
         destination.Flush();
     }
     public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
-    public override void Write(byte[] buffer, int offset, int count) => compressed.Write(buffer, offset, count);
+    public override void Write(byte[] buffer, int offset, int count)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        compressed.Write(buffer, offset, count);
+        EmitAvailable();
+    }
+
+    public override void WriteByte(byte value)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        compressed.WriteByte(value);
+        EmitAvailable();
+    }
+
+    private void EmitAvailable()
+    {
+        var position = compressed.Position;
+        var bytes = JavaZlib.DecompressAvailable(compressed, out var failure);
+        if (bytes.Length > emitted)
+            destination.Write(bytes, emitted, bytes.Length - emitted);
+        emitted = bytes.Length;
+        compressed.Position = position;
+        JavaZlib.ValidateChecksumIfPresent(compressed, bytes);
+        if (failure is not null) throw failure;
+    }
 
     protected override void Dispose(bool disposing)
     {
         if (!disposing || disposed) return;
         disposed = true;
-        Flush();
-        compressed.Dispose();
-        destination.Dispose();
-        base.Dispose(disposing);
+        try
+        {
+            var position = compressed.Position;
+            var bytes = JavaZlib.Decompress(compressed);
+            if (bytes.Length > emitted)
+                destination.Write(bytes, emitted, bytes.Length - emitted);
+            emitted = bytes.Length;
+            compressed.Position = position;
+            destination.Flush();
+        }
+        finally
+        {
+            compressed.Dispose();
+            destination.Dispose();
+            base.Dispose(disposing);
+        }
     }
 }
 
