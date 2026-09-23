@@ -1,0 +1,52 @@
+{:schema-version 1
+    :product-family :java-library
+    :destination-bundle dripsharp.java-library/rule-bundle
+    :mechanical-source
+    {:repository "https://example.invalid/upstream/java-library.git"
+     :revision "2222222222222222222222222222222222222222"
+     :notice-reference "NOTICE.txt"}
+    :project {:assembly-name "DripSharp.Microprograms"
+              :root-namespace "DripSharp.Microprograms"
+              :target-framework "netstandard2.0"
+              :nullable "enable"
+              :implicit-usings false
+              :warnings-as-errors true}
+    :package {:id "DripSharp.Microprograms"
+              :version "1.0.0"
+              :license-expression "Apache-2.0"
+              :title "Translated microprogram subjects"
+              :description "Local differential subjects emitted through the ordinary Java library bundle."
+              :authors "DripSharp"
+              :tags "java fixture"
+              :project-url "https://example.invalid/java-library"
+              :repository-url "https://example.invalid/java-library.git"
+              :repository-type "git"}
+    :output {:project-directory "library"
+             :source-directory "src"
+             :resource-directory "resources"
+             :project-file "DripSharp.Microprograms.csproj"
+             :source-map-file "source-map.edn"
+             :diagnostics-file "diagnostics.edn"
+             :manifest-file "generation-manifest.edn"
+             :public-metadata-file "public-metadata.edn"
+             :annotation-decisions-file "annotation-decisions.edn"}
+    :namespaces {"micro" "DripSharp.Microprograms"}
+    :name-policy {:public-identifiers :csharp
+                  :methods :methods :fields :fields :overloads :overloads}
+    :namespace-prefixes {}
+    :destination-capabilities #{:java-compat :java-regex-unicode}
+    :runtime-packages
+    [{:id "Microsoft.CSharp"
+      :version "4.7.0"
+      :projection :netstandard-compatibility}
+     {:id "System.Memory"
+      :version "4.6.3"
+      :projection :netstandard-compatibility}
+     {:id "System.Text.Encoding.CodePages"
+      :version "10.0.0"
+      :projection :netstandard-compatibility}]
+    :resources {}
+    :resource-policy {:strategy :embedded-resource-preserve-path}
+    :project-dependencies []
+    :external-dependencies {}
+    :public-surface {:strategy dripsharp.java-library/public-surface-strategy}}

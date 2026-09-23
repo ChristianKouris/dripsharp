@@ -1,0 +1,21 @@
+{:schema-version 1
+ :id "numeric-and-collections"
+ :generator {:id :authored-regression :version 1 :seed nil}
+ :sources ["subjects/micro/Numeric.java" "subjects/micro/Collections.java"]
+ :configuration "destination.edn"
+ :input "cases.tsv"
+ :java-observer "MicroObserver.java"
+ :dotnet-observer "Program.cs"
+ :operations
+ {"mix" {:java-type "micro.Numeric" :java-method "mix"
+         :dotnet-type "DripSharp.Microprograms.Numeric" :dotnet-method "Mix"
+         :parameters ["int" "int"]}
+  "divide" {:java-type "micro.Numeric" :java-method "divide"
+            :dotnet-type "DripSharp.Microprograms.Numeric" :dotnet-method "Divide"
+            :parameters ["int" "int"]}
+  "wide" {:java-type "micro.Numeric" :java-method "wide"
+          :dotnet-type "DripSharp.Microprograms.Numeric" :dotnet-method "Wide"
+          :parameters ["long" "long"]}
+  "pick" {:java-type "micro.Collections" :java-method "pick"
+          :dotnet-type "DripSharp.Microprograms.Collections" :dotnet-method "Pick"
+          :parameters ["string" "string" "int"]}}}

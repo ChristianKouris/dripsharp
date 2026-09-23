@@ -270,7 +270,8 @@
                second
                parse-long))))
 
-(defn- java-tools
+(defn java-tools
+  "Resolves installed Java tools matching the contract's exact Java release."
   [contract]
   (let [requested-major (:java-release contract)
         candidates (->> [(System/getenv "DRIPSHARP_JAVA_HOME")

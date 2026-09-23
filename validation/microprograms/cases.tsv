@@ -1,0 +1,16 @@
+DRIPSHARP_DIFFERENTIAL_CASES_V1
+numeric	zero	0	mix	none	i:0	i:0
+numeric	overflow	0	mix	none	i:2147483647	i:1
+numeric	negative	0	mix	none	i:-2147483648	i:31
+numeric	masked-shift	0	mix	none	i:-1	i:32
+numeric	negative-shift	0	mix	none	i:-1	i:-1
+numeric	quotient	0	divide	none	i:-7	i:2
+numeric	zero-divisor	0	divide	arithmetic	i:1	i:0
+numeric	wide	0	wide	none	i:9223372036854775806	i:0
+numeric	wide-overflow	0	wide	none	i:9223372036854775807	i:0
+collection	first	0	pick	none	u:0061006c007000680061	u:0062006500740061	i:0
+collection	second	0	pick	none	u:0061006c007000680061	u:0062006500740061	i:1
+collection	null	0	pick	none	u:	n:	i:0
+collection	empty	0	pick	none	u:	n:	i:1
+collection	utf16	0	pick	none	u:0000d8000061dfff	u:0009000a	i:1
+collection	bounds	0	pick	index-out-of-bounds	u:	n:	i:2
