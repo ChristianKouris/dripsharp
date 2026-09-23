@@ -9,3 +9,5 @@ Public generated APIs retain `System.IO.FileInfo`, including generic collection 
 PdfCarton hosts the shared pathname and boundary adapters in its IO assembly. Fonts, PDFBox, and Preflight use internal access to that representation; independent modules retain their own support. No additional public type or assembly is introduced.
 
 Regression evidence lives in the direct JavaCompat differential, generated translation fixtures, the shipped release smoke suite, and the isolated single-package consumer. The font-cache regression creates fresh product statics per case and checks both public font-dependent PDF creation and the selected cache directory.
+
+The [local font-cache differential](../validation/pdfcube-font-cache/README.md) complements that regression with deterministic font inputs, fresh processes, and forward/reverse case ordering. It compares the package with Java 17 cache behavior and separately asserts the Java 25 empty-path difference while comparing public PDF creation and extraction across both JVMs and .NET.
