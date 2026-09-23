@@ -452,6 +452,71 @@
 (defn- shell-quote [value]
   (str "'" (str/replace (str value) "'" "'\"'\"'") "'"))
 
+(defn prepare-case-runner!
+  "Builds one fixed runner pair for a local session. The returned executor
+  reuses only these binaries, never a previous session's build. Every execution
+  writes its own input and observations. Callers may wrap run-command! to enforce
+  a cumulative process/deadline budget (including preparation)."
+  [{:keys [root contract build-root versions run-command!]}]
+  (let [{:keys [java javac home]} (java-tools contract)
+        project (configured-path root (get-in contract [:probe :project]))
+        framework (second (re-find #"<TargetFramework>([^<]+)</TargetFramework>"
+                                   (slurp (str project))))
+        _ (when-not (= "net10.0" framework)
+            (throw (ex-info "Concrete probe must target configured net10.0 contract"
+                            {:kind :runtime-contract :framework framework})))
+        command! (fn [phase timeout command]
+                   (case-command! run-command! phase
+                                  {:directory root :timeout-ms timeout
+                                   :command (mapv str command)}))
+        classes (paths/resolve-path build-root "classes")
+        binaries (paths/resolve-path build-root "dotnet")
+        _ (Files/createDirectories classes (make-array FileAttribute 0))
+        _ (swap! versions assoc :java-contract (:java-release contract)
+                 :java-home (str home) :dotnet-contract framework)
+        _ (swap! versions assoc :javac
+                 (str/trim (process/without-java-tool-options-banner
+                            (command! :java-version 10000 [javac "-version"])))
+                 :dotnet-sdk
+                 (str/trim (command! :dotnet-version 10000 ["dotnet" "--version"])))
+        _ (command! :java-compile (get-in contract [:oracle :compile-timeout-ms])
+                    [javac "--release" (:java-release contract) "-encoding" "UTF-8"
+                     "-d" classes (configured-path root (get-in contract [:oracle :source]))])
+        _ (command! :dotnet-build (get-in contract [:probe :build-timeout-ms])
+                    ["dotnet" "build" project "--nologo" "--configuration" "Release"
+                     "--verbosity:minimal" "-warnaserror" "--output" binaries])
+        java-command [java "-cp" classes (get-in contract [:oracle :main-class])]
+        dotnet-command ["dotnet" "--roll-forward" "LatestPatch"
+                        (paths/resolve-path binaries "DripSharp.JavaCompat.DirectProbe.dll")]
+        java-version (str/trim (process/without-java-tool-options-banner
+                                (command! :java-runtime 10000
+                                          (conj java-command "--runtime-version"))))
+        dotnet-version (str/trim (command! :dotnet-runtime 10000
+                                           (conj dotnet-command "--runtime-version")))
+        _ (swap! versions assoc :java-runtime java-version :dotnet-runtime dotnet-version)
+        _ (when-not (and (str/starts-with? java-version (str (:java-release contract) "."))
+                         (str/starts-with? dotnet-version ".NET 10."))
+            (throw (ex-info "Executed runtime differs from configured contract"
+                            {:kind :runtime-contract :versions @versions})))]
+    {:versions @versions
+     :execute!
+     (fn [rows proof-root]
+       (let [input (paths/resolve-path proof-root "input.tsv")
+             _ (util/write-text! input (cases/write-cases rows))
+             execute (fn [side command timeout]
+                       (let [output (paths/resolve-path proof-root (if (= side :oracle) "java.tsv" "dotnet.tsv"))
+                             execution (cases/process-outcome
+                                        run-command! side
+                                        {:directory root :timeout-ms timeout
+                                         :command (mapv str (into command ["--cases" input output]))})]
+                         (assoc execution :observations
+                                (if (paths/regular-file? output) (slurp (str output)) ""))))
+             oracle (execute :oracle java-command (get-in contract [:oracle :run-timeout-ms]))
+             probe (execute :probe dotnet-command (get-in contract [:probe :run-timeout-ms]))]
+         (assoc (cases/compare-executions rows oracle probe)
+                :executions {:oracle (dissoc oracle :observations)
+                             :probe (dissoc probe :observations)})))}))
+
 (defn verify-cases!
   "Explicit local entry point. Compiles each fixed runner once for the entire
   selected batch; both runners then consume the same saved input file.
@@ -472,8 +537,6 @@
          _ (Files/createDirectories parent (make-array FileAttribute 0))
          proof-root (Files/createTempDirectory parent "run-" (make-array FileAttribute 0))
          input (paths/resolve-path proof-root "input.tsv")
-         oracle-output (paths/resolve-path proof-root "java.tsv")
-         probe-output (paths/resolve-path proof-root "dotnet.tsv")
          versions (atom {})
          evidence {:input (str input)
                    :input-kind :recorded
@@ -487,60 +550,10 @@
          _ (util/write-text! input (cases/write-cases rows))
          result
          (try
-           (let [{:keys [java javac home]} (java-tools contract)
-                 project (configured-path root (get-in contract [:probe :project]))
-                 framework (second (re-find #"<TargetFramework>([^<]+)</TargetFramework>"
-                                            (slurp (str project))))
-                 _ (when-not (= "net10.0" framework)
-                     (throw (ex-info "Concrete probe must target configured net10.0 contract"
-                                     {:kind :runtime-contract :framework framework})))
-                 command! (fn [phase timeout command]
-                            (case-command! run-command! phase
-                                           {:directory root :timeout-ms timeout
-                                            :command (mapv str command)}))
-                 classes (paths/resolve-path proof-root "classes")
-                 binaries (paths/resolve-path proof-root "dotnet")
-                 _ (Files/createDirectories classes (make-array FileAttribute 0))
-                 _ (swap! versions assoc :java-contract (:java-release contract)
-                          :java-home (str home) :dotnet-contract framework)
-                 _ (swap! versions assoc :javac
-                          (str/trim (process/without-java-tool-options-banner
-                                     (command! :java-version 10000 [javac "-version"])))
-                          :dotnet-sdk
-                          (str/trim (command! :dotnet-version 10000 ["dotnet" "--version"])))
-                 _ (command! :java-compile (get-in contract [:oracle :compile-timeout-ms])
-                             [javac "--release" (:java-release contract) "-encoding" "UTF-8"
-                              "-d" classes (configured-path root (get-in contract [:oracle :source]))])
-                 _ (command! :dotnet-build (get-in contract [:probe :build-timeout-ms])
-                             ["dotnet" "build" project "--nologo" "--configuration" "Release"
-                              "--verbosity:minimal" "-warnaserror" "--output" binaries])
-                 java-command [java "-cp" classes (get-in contract [:oracle :main-class])]
-                 dotnet-command ["dotnet" "--roll-forward" "LatestPatch"
-                                 (paths/resolve-path binaries "DripSharp.JavaCompat.DirectProbe.dll")]
-                 java-version (str/trim (process/without-java-tool-options-banner
-                                         (command! :java-runtime 10000
-                                                   (conj java-command "--runtime-version"))))
-                 dotnet-version (str/trim (command! :dotnet-runtime 10000
-                                                    (conj dotnet-command "--runtime-version")))
-                 _ (swap! versions assoc :java-runtime java-version :dotnet-runtime dotnet-version)
-                 _ (when-not (and (str/starts-with? java-version (str (:java-release contract) "."))
-                                  (str/starts-with? dotnet-version ".NET 10."))
-                     (throw (ex-info "Executed runtime differs from configured contract"
-                                     {:kind :runtime-contract :versions @versions})))
-                 execute (fn [side command output timeout]
-                           (let [execution (cases/process-outcome
-                                            run-command! side
-                                            {:directory root :timeout-ms timeout
-                                             :command (mapv str (into command ["--cases" input output]))})]
-                             (assoc execution :observations
-                                    (if (paths/regular-file? output) (slurp (str output)) ""))))
-                 oracle (execute :oracle java-command oracle-output
-                                 (get-in contract [:oracle :run-timeout-ms]))
-                 probe (execute :probe dotnet-command probe-output
-                                (get-in contract [:probe :run-timeout-ms]))]
-             (assoc (cases/compare-executions rows oracle probe)
-                    :executions {:oracle (dissoc oracle :observations)
-                                 :probe (dissoc probe :observations)}))
+           (let [runner (prepare-case-runner!
+                         {:root root :contract contract :build-root proof-root
+                          :versions versions :run-command! run-command!})]
+             ((:execute! runner) rows proof-root))
            (catch clojure.lang.ExceptionInfo error
              {:status :failed :first-difference (ex-data error)}))
          summary (merge evidence result {:versions @versions})]

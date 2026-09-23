@@ -154,8 +154,10 @@
          :identity {:id "DripSharp.PdfCarton.IO" :version version}
          :inspection
          {:dependencies
-         [{:id "Microsoft.Extensions.Logging.Abstractions"
-            :version "10.0.0"}]
+         [{:id "Microsoft.CSharp" :version "4.7.0"}
+          {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+          {:id "System.Memory" :version "4.6.3"}
+          {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
           :package-files
           (conj legal
                 {:kind :readme

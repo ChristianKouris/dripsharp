@@ -148,3 +148,112 @@ restore, build, or oracle, and requires no installed Java 17 or .NET runtime.
 The existing `dripsharp.java-compat-differential-test` remains unchanged and
 continues to verify the original fixed behavior and type-availability rows.
 A bounded match is evidence for these cases, not complete Java equivalence.
+
+## Generated sequences and shrinking (explicit local workloads)
+
+`dripsharp.differential-generation` generates concrete, bounded EDN records
+outside both implementations. It uses a small versioned `java.util.Random`
+generator and domain-aware reducer rather than a test.check shrink tree: the
+reducer needs stable observation IDs, resource dependencies, and preserved
+exception intent. No additional dependency or automatic campaign is installed.
+The generator supports boundary-biased byte arrays, signed 64-bit integers,
+UTF-16 strings (including isolated surrogates), pathname strings, and interleaved
+variable-length operation sequences. Path strings currently exercise string
+hashing; this does **not** assert filesystem behavior or public `FileInfo`
+adaptation. Those boundaries remain defined in `doc/java-file-compatibility.md`.
+
+Each record includes the generator ID/version, seed, generation runtime,
+limits, and the **actual operations and exact value tokens**. An explicit
+`:handle` maps to the existing runner's `(family, case)` state key; `:requires`
+names the successful constructor step used by a read. Step IDs never change
+during reduction. A small Clojure domain model checks construction, cursor
+bounds, and exception intent; it does not calculate byte/int/hash results.
+Reads before construction, null construction, and underflow are intentional
+invalid operations. Surviving operations must retain their original expected
+exception and valid/invalid intent. Failed construction preserves earlier state.
+
+After checking RAM/CPU, a focused local campaign is:
+
+```sh
+DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M \
+  -m dripsharp.differential-campaign --seed 1 --count 10
+```
+
+A broader, still bounded local exploration can use `--count 100
+--max-processes 500 --max-ms 600000`. Live generation campaigns and live shrinking are **not**
+part of hosted workflow registration, the process-free unit tier, or default
+test discovery. All live examples here are opt-in local commands. No workflow,
+schedule, runner matrix, or package/generation gate is added.
+
+Each campaign builds its fixed Java and .NET runners once, with the current
+Java 17/net10.0 contracts, then reuses that pair only within the campaign. It
+stops at the first failed candidate. Defaults are 10 generated cases, 32
+operations per case, 32 byte/code units per value, 64 KiB per record, 200 total
+child processes, and five minutes including setup. Shrinking is bounded by 100
+candidate attempts and 30 seconds, also within the campaign's total budget.
+`--count`, `--max-processes`, `--max-ms`, `--shrink-attempts`, and `--shrink-ms`
+control these budgets. Invalid candidates consume shrink attempts. Every child
+process timeout is capped by the remaining campaign and shrink time; exhausting
+the process budget prevents further launches. Pure evaluator callbacks must
+terminate, and custom live adapters must honor the supplied remaining time.
+
+The reducer removes chunks/operations (including users of removed constructors),
+shrinks token values, and simplifies `get-int` to `get` where valid. It accepts
+only the same semantic failure signature: stable family/case/step/operation,
+expected and observed exception categories, and differing observation fields.
+Build failures, crashes, timeouts, changed failure operations, unrelated
+exceptions, and malformed observations cannot replace a semantic failure.
+This is a bounded greedy reduction, not a claim of a globally smallest input.
+
+Artifacts live under `validation-output/generated-cases/campaign-*` (override
+with `--output DIR`). Every executed candidate has `case.edn`, the shared
+`input.tsv`, both traces, and `result.edn`. `summary.edn` records versions, host,
+limits, process count, and case outcomes; failed preparation still retains the
+initial input. Semantic failures also retain the original comparison and
+`minimal.edn`, the accepted reduced input and its last verified comparison.
+Campaign and shrink counts are separate: `generated` counts proposed inputs,
+`rejected` counts invalid/non-smaller inputs, `executed` counts completed
+behavioral comparisons, `failed` counts semantic mismatches, `passed` counts
+matches, `timed-out` counts timeouts, and `harness-failed` counts other execution
+or observation failures. Replays have zero newly generated cases. Discarded
+candidates and failed processes are never counted as behavioral executions.
+
+Replay the actual saved record, even if its generator or PRNG has changed:
+
+```sh
+DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M \
+  -m dripsharp.differential-campaign \
+  --replay validation-output/generated-cases/campaign-EXAMPLE/minimal.edn \
+  --shrink-attempts 0
+```
+
+The printed replay command selects the saved input; no seed regeneration is
+involved. Replay rebuilds current sources and records current runtime versions.
+For reusable process-free callers, `generate`, `validate!`, `candidates`,
+`shrink!`, `write-record!`, `read-record`, and `replay!` are in
+`dripsharp.differential-generation`. `:generation-limits` on the campaign API
+sets generation bounds. Unsupported operation families require their own
+explicit domain contract, rather than guessing preconditions.
+
+Process-free regression checks (no child processes):
+
+```sh
+clojure -M:test --namespace dripsharp.differential-generation-test \
+  --namespace dripsharp.differential-cases-test
+```
+
+The explicit local live regression uses a deliberately injected **test fault**:
+real Java/.NET results must first match, then successful negative byte results
+are observed as unsigned. It reduces a generated 17-operation case to
+`wrap(b:0080), get, get`, retaining the original failing step, and replays the
+saved record with generation disabled. Unmodified traces are retained as
+`dotnet-unperturbed.tsv`. This tests the reducer, not a known product defect:
+
+```sh
+DRIPSHARP_WORKERS=22 JAVA_TOOL_OPTIONS=-Xmx28g clojure -J-Xmx28g -M:test \
+  --namespace dripsharp.differential-generation-live
+```
+
+The live file intentionally lacks the `_test.clj` suffix. The process-free
+checks are deterministic and small; registration alone never launches a live
+campaign. Bounded samples do not establish complete Java or PdfCarton equivalence.
