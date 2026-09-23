@@ -40,4 +40,6 @@
       (is (= "override-super" (get-in run [:first-difference :identity :operation])))
       (is (= "illegal-argument" (get-in run [:first-difference :probe :exception])))
       (is (= change (:perturbation (read-edn (:snapshot run))))))
-    (is (= (:first-difference result) (:first-difference replay)))))
+    (is (= (:first-difference result) (:first-difference replay)))
+    (println
+     "Live translated-bridge negative control: exporting the internal empty JavaFile through FileInfo was detected at empty/override-super and reproduced from the saved snapshot.")))

@@ -38,17 +38,18 @@
     result))
 
 (deftest generated-live-fault-shrinks-and-replays-without-generation
-  (let [summary (campaign/run! {:seed 42 :case-count 1 :shrink-attempts 200
+  (let [summary (campaign/run! {:seed 42 :case-count 1 :family "byte-buffer"
+                                :shrink-attempts 200
                                 :shrink-ms 60000 :max-ms 180000 :max-processes 200
                                 :run-command! signed-byte-test-fault!})
         original (gen/read-record (first (:records summary)))
         minimal (gen/read-record (:minimal summary))]
     (is (= :failed (:status summary)))
     (is (= 17 (count (:operations original))))
-    (is (= 3 (count (:operations minimal))))
-    (is (= ["wrap" "get" "get"] (mapv :operation (:operations minimal))))
-    (is (= ["b:0080"] (:arguments (first (:operations minimal)))))
-    (is (= "15" (:step (last (:operations minimal)))))
+    (is (= 2 (count (:operations minimal))))
+    (is (= ["wrap" "get"] (mapv :operation (:operations minimal))))
+    (is (= ["b:80"] (:arguments (first (:operations minimal)))))
+    (is (= "4" (:step (last (:operations minimal)))))
     (is (= (gen/failure-signature (:original summary))
            (get-in summary [:reduction :signature])))
     (is (= :exhausted (get-in summary [:reduction :stop])))
@@ -60,4 +61,4 @@
         (is (= 0 (get-in replay [:counts :generated])))
         (is (= (get-in summary [:reduction :signature])
                (gen/failure-signature (:original replay)))))))
-  (println "Live signed-byte test fault: 17 operations reduced to wrap(b:0080), get, get; recorded replay verified."))
+  (println "Live signed-byte test fault: the 17-operation byte-buffer sequence reduced to wrap(b:80), get; recorded replay verified."))
