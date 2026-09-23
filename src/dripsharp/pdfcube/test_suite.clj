@@ -10,6 +10,7 @@
             [clojure.string :as str]
             [clojure.walk :as walk]
             [dripsharp.csharp :as csharp]
+            [dripsharp.differential-cases :as differential-cases]
             [dripsharp.harness :as harness]
             [dripsharp.java-library :as java-library]
             [dripsharp.java-project :as java-project]
@@ -29,8 +30,99 @@
 
 (def ^:private revision "9286e47d89d6877005c9d2d0f2fd38793a62519a")
 (def ^:private suite-contract-file "adapted-tests/suite-contract.edn")
+(def ^:private promoted-regressions-file
+  "targets/pdfcube/consumer-tests/fixtures/promoted-regressions.tsv")
+(def ^:private promoted-regressions-header
+  ["layer" "family" "case" "step" "operation" "java-contract"
+   "upstream-reference" "expected-exception" "expected-result"
+   "expected-state" "arguments"])
+(def ^:private promoted-regression-layers
+  #{"direct-java-compat" "translated-microprogram" "public-pdfcarton"})
 
-(declare materialize-pinned-fixtures!)
+(declare fail! materialize-pinned-fixtures!)
+
+(defn- promoted-regression-input-rows
+  [workspace-root layer]
+  (let [relative
+        ({"direct-java-compat" "validation/java-compat/cases.tsv"
+          "translated-microprogram" "validation/microprograms/cases.tsv"}
+         layer)]
+    (when relative
+      (differential-cases/read-cases
+       (slurp (str (paths/resolve-path workspace-root relative)))))))
+
+(defn read-promoted-regressions!
+  "Reads the authored minimized-case ledger used by parent and shipped tests.
+  Direct and translated rows must retain an exact concrete input in their
+  existing layer-specific runner. Stored observations are immutable test
+  expectations; this path never derives them from generated C# output."
+  ([] (read-promoted-regressions! (paths/workspace-root)))
+  ([workspace-root]
+   (let [root (paths/absolute workspace-root)
+         file (paths/resolve-path root promoted-regressions-file)
+         [header & lines] (str/split-lines (slurp (str file)))
+         rows
+         (mapv
+          (fn [line-number line]
+            (let [fields (str/split line #"\t" -1)
+                  row (zipmap (map keyword promoted-regressions-header) fields)
+                  arguments (if (str/blank? (:arguments row))
+                              []
+                              (str/split (:arguments row) #"," -1))]
+              (when-not
+               (and (= (count promoted-regressions-header) (count fields))
+                    (contains? promoted-regression-layers (:layer row))
+                    (every? #(re-matches #"[A-Za-z0-9_.-]+" (get row %))
+                            [:family :case :step :operation
+                             :expected-exception])
+                    (every? (complement str/blank?)
+                            (map row [:java-contract :upstream-reference]))
+                    (differential-cases/value-token? (:expected-result row))
+                    (differential-cases/value-token? (:expected-state row))
+                    (every? differential-cases/value-token? arguments))
+                (fail! "Promoted PdfCarton regression row is invalid"
+                       {:reason :invalid-promoted-regression
+                        :path (str file)
+                        :line line-number
+                        :value line}))
+              (assoc row :arguments (vec arguments))))
+          (iterate inc 2)
+          lines)
+         identities (mapv #(select-keys % [:layer :family :case :step]) rows)
+         layers (set (map :layer rows))]
+     (when-not (= promoted-regressions-header
+                  (str/split header #"\t" -1))
+       (fail! "Promoted PdfCarton regression header changed"
+              {:reason :invalid-promoted-regression-header
+               :path (str file)
+               :expected promoted-regressions-header
+               :actual (str/split header #"\t" -1)}))
+     (when-not (and (seq rows)
+                    (= (count identities) (count (set identities)))
+                    (= promoted-regression-layers layers))
+       (fail! "Promoted PdfCarton regression layers are incomplete or ambiguous"
+              {:reason :invalid-promoted-regression-inventory
+               :path (str file)
+               :layers layers
+               :identities identities}))
+     (doseq [layer ["direct-java-compat" "translated-microprogram"]
+             :let [source-rows (promoted-regression-input-rows root layer)]
+             row (filter #(= layer (:layer %)) rows)]
+       (when-not
+        (some
+         #(= (select-keys row
+                          [:family :case :step :operation
+                           :expected-exception :arguments])
+             (select-keys %
+                          [:family :case :step :operation
+                           :expected-exception :arguments]))
+         source-rows)
+         (fail! "Promoted regression no longer matches its authored input"
+                {:reason :promoted-regression-input-drift
+                 :path (str file)
+                 :layer layer
+                 :identity (select-keys row [:family :case :step :operation])})))
+     rows)))
 
 (def ^:private module-specs
   [{:id :io
@@ -2625,6 +2717,7 @@
         inventory (inventory! source-workspace-root)
         contract (read-contract! (:target-directory target-contract))
         _ (verify-inventory! contract inventory)
+        _ (read-promoted-regressions! source-workspace-root)
         module-results
         (mapv #(module-emission! source-workspace-root generated-root %) modules)
         emission (vec (mapcat :emission module-results))

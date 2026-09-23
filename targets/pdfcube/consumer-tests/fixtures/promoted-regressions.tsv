@@ -1,0 +1,4 @@
+layer	family	case	step	operation	java-contract	upstream-reference	expected-exception	expected-result	expected-state	arguments
+direct-java-compat	string	code-units	0	hash	OpenJDK 17	java.lang.String#hashCode	none	i:1657539497	n:	u:00000009d8000061dc00ffff
+translated-microprogram	numeric	overflow	0	mix	OpenJDK 17	Java 17 integer arithmetic and unsigned right shift	none	i:-1073741825	n:	i:2147483647,i:1
+public-pdfcarton	cos-identity	integer-cache	0	get	OpenJDK 25 / PDFBox 3.0.8	Apache PDFBox 3.0.8 9286e47d89d6877005c9d2d0f2fd38793a62519a COSInteger.get	none	i:1	n:	i:42

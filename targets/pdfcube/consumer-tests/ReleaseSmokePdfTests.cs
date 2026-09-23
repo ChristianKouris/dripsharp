@@ -1,6 +1,7 @@
 using DripSharp.PdfCarton;
 using DripSharp.PdfCarton.Pdmodel;
 using DripSharp.PdfCarton.Pdmodel.Common;
+using DripSharp.PdfCarton.Cos;
 #if !PDFCARTON_PACKAGE_PROBE
 using Xunit;
 #endif
@@ -45,6 +46,40 @@ public sealed class ReleaseSmokePdfTests
         {
             File.Delete(file);
         }
+    }
+
+    [Fact]
+    public void PromotedJavaRegressionCasesMatchStoredObservations()
+    {
+        string fixture = Path.Combine(
+            AppContext.BaseDirectory,
+            "Fixtures",
+            "promoted-regressions.tsv");
+        string[] lines = File.ReadAllLines(fixture);
+        Assert.Equal(
+            "layer\tfamily\tcase\tstep\toperation\tjava-contract\t" +
+            "upstream-reference\texpected-exception\texpected-result\t" +
+            "expected-state\targuments",
+            lines[0]);
+
+        string[][] cases = lines.Skip(1)
+            .Select(line => line.Split('\t'))
+            .Where(fields => fields[0] == "public-pdfcarton")
+            .ToArray();
+        string[] regression = Assert.Single(cases);
+        Assert.Equal(11, regression.Length);
+        Assert.Equal("cos-identity", regression[1]);
+        Assert.Equal("integer-cache", regression[2]);
+        Assert.Equal("get", regression[4]);
+        Assert.Equal("none", regression[7]);
+        Assert.Equal("n:", regression[9]);
+
+        int value = int.Parse(
+            regression[10].Substring(2),
+            System.Globalization.CultureInfo.InvariantCulture);
+        string observation = ReferenceEquals(
+            COSInteger.Get(value), COSInteger.Get(value)) ? "i:1" : "i:0";
+        Assert.Equal(regression[8], observation);
     }
 }
 #endif

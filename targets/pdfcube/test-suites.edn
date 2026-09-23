@@ -80,7 +80,7 @@
     "pdfcube-pdfbox"
     {:source "consumer-tests/ReleaseSmokePdfTests.cs"
      :destination "ReleaseSmokePdfTests.cs"
-     :sha256 "781e93a91af375ac3050466eb2d8e20df2e3c62b5c8166f90441f1dc7329e59a"}
+     :sha256 "03440b4696c1f497c83bc2c5d30b4ea0b290d2acf59e8511f1e3f6d10489960e"}
     "pdfcube-preflight"
     {:source "consumer-tests/ReleaseSmokePreflightTests.cs"
      :destination "ReleaseSmokePreflightTests.cs"
@@ -90,7 +90,13 @@
      :destination "Fixtures/metadata.xmp"
      :sha256 "e0e15a9c1ad91ba8389c1e23e3fd598e299aa28c73b45dee49b923e054464fc6"
      :license "Apache-2.0"
-     :attribution "Authored for the PdfCarton release smoke suite."}]}
+     :attribution "Authored for the PdfCarton release smoke suite."}
+    {:source "consumer-tests/fixtures/promoted-regressions.tsv"
+     :destination "Fixtures/promoted-regressions.tsv"
+     :sha256 "57512e15106de4b5a921bb82492f80a58bbc77635ccbde86132010a7054fe03e"
+     :license "Apache-2.0"
+     :attribution
+     "Authored minimized inputs and Java-derived expectations for PdfCarton regressions."}]}
   {:id :pdfcarton-adapted-upstream
    :kind :adapted-upstream
    :policy :shipped

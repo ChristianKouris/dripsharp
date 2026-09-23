@@ -187,6 +187,31 @@
     (is (str/includes? generator "verify-built-lifecycle!"))
     (is (str/includes? generator "built-lifecycle-snapshots"))))
 
+(deftest promoted-regressions-retain-authored-inputs-and-java-observations
+  (let [rows (test-suite/read-promoted-regressions!)
+        by-layer (group-by :layer rows)
+        public (first (get by-layer "public-pdfcarton"))]
+    (is (= #{"direct-java-compat"
+             "translated-microprogram"
+             "public-pdfcarton"}
+           (set (keys by-layer))))
+    (is (= 1 (count (get by-layer "direct-java-compat"))))
+    (is (= 1 (count (get by-layer "translated-microprogram"))))
+    (is (= {:family "cos-identity"
+            :case "integer-cache"
+            :operation "get"
+            :java-contract "OpenJDK 25 / PDFBox 3.0.8"
+            :expected-exception "none"
+            :expected-result "i:1"
+            :expected-state "n:"
+            :arguments ["i:42"]}
+           (select-keys public
+                        [:family :case :operation :java-contract
+                         :expected-exception :expected-result
+                         :expected-state :arguments])))
+    (is (str/includes? (:upstream-reference public)
+                       "9286e47d89d6877005c9d2d0f2fd38793a62519a"))))
+
 (deftest standalone-lifecycle-rejects-fixture-and-build-output-loss
   (let [root (temp-directory)
         project {:id "DripSharp.PdfCarton.Tests"

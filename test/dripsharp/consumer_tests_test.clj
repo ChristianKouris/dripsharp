@@ -119,7 +119,8 @@
              "consumer-tests/ReleaseSmokePdfTests.cs"
              "consumer-tests/ReleaseSmokePreflightTests.cs"}
            (set (map :source (vals (:profile-tests strategy))))))
-    (is (= ["consumer-tests/fixtures/metadata.xmp"]
+    (is (= ["consumer-tests/fixtures/metadata.xmp"
+            "consumer-tests/fixtures/promoted-regressions.tsv"]
            (mapv :source (:fixtures strategy))))))
 
 (deftest sqltrellis-release-smoke-is-an-isolated-shipped-project
@@ -369,10 +370,11 @@
                 [:post-test :dispatch-probe]]
                @probe-calls))
         (is (= #{"DripSharp.PdfCarton.Tests"
+                 "DripSharp.PdfCarton.ReleaseSmoke"
                  "DripSharp.PdfCarton.Validation.Tests"}
                (set (keys (:project-files emitted)))
                (set (keys (:project-files verified)))))
-        (is (= 6 (count @calls)))
+        (is (= 9 (count @calls)))
         (is (every? #(= (.resolve workspace "target/generated/pdfcarton")
                         (:directory %))
                     @calls)))
