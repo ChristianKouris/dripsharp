@@ -107,6 +107,17 @@
       (throw (ex-info usage {:kind :invalid-command-line
                              :arguments (vec args)})))))
 
+(defn prerequisite-details
+  "Only actionable prerequisite fields are exposed; never dump arbitrary error
+  data, environment values or command options into release diagnostics."
+  [data]
+  (when (contains? #{:release-prerequisite-failed
+                     :product-repository-publication-failed} (:kind data))
+    (let [details (select-keys data [:reason :path :subject :status :submodule-path
+                                     :staged-paths :disposable-build-paths :correction
+                                     :package :version :http-status :property])]
+      (when (seq details) (str "\n" (pr-str details))))))
+
 (defn -main
   [& args]
   (try
@@ -117,6 +128,7 @@
                       ""
                       "DripSharp command failed: ")
                     (.getMessage error)
+                    (prerequisite-details (ex-data error))
                     (when-not (str/blank? output)
                       (str "\n" (str/trim output))))
                (if (= :invalid-command-line kind) 2 1))))

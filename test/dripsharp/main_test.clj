@@ -153,3 +153,17 @@
            (main/dispatch! ["proof" "pdfcube" "--resume" "bounded-proof"])))
     (is (= :invalid-command-line
            (:kind (failure-data #(main/dispatch! ["proof" "pdfcube" "--resume"])))))))
+
+(deftest release-errors-display-actionable-paths-without-arbitrary-data
+  (let [message (main/prerequisite-details
+                 {:kind :product-repository-publication-failed :reason :dirty-checkout
+                  :status "?? src/Product/obj/assets.json" :path "products/pdfcarton"
+                  :environment {"TOKEN" "do-not-print"}})]
+    (is (.contains message "assets.json"))
+    (is (.contains message "dirty-checkout"))
+    (is (not (.contains message "do-not-print"))))
+  (is (.contains (main/prerequisite-details
+                  {:kind :release-prerequisite-failed :reason :version-already-published
+                   :package "DripSharp.PdfCarton" :version "3.0.8-alpha.6" :http-status "200"})
+                 "version-already-published"))
+  (is (nil? (main/prerequisite-details {:kind :unrelated :path "hidden"}))))
