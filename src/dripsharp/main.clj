@@ -14,8 +14,9 @@
    "Usage: clojure -M:run "
    "generate|verify|pack|package <target> <profile>"
    "|differential <target> [validation-id]"
-   "|proof <target>"
+   "|proof <target> [--resume <run-id>]"
    "|product-sync <target>"
+   "|product-preflight <target> [--live]"
    "|product-prepare <target> <branch> <commit-message>"
    "|authorship-report <pkl|pdfcube|sqltrellis|all>"
    "|java-compat-differential"
@@ -47,11 +48,16 @@
        (cond-> {:target target}
          selector (assoc :validation selector)))
 
-      (and (= "proof" command)
-           target
-           (nil? selector)
-           (empty? extra))
-      (target-execution/proof! {:target target})
+      (and (= "proof" command) target
+           (or (and (nil? selector) (empty? extra))
+               (and (= "--resume" selector) (= 1 (count extra)))))
+      (target-execution/proof!
+       (cond-> {:target target} selector (assoc :resume-run (first extra))))
+
+      (and (= "product-preflight" command)
+           target (or (nil? selector) (= "--live" selector)) (empty? extra))
+      (target-execution/prerequisites!
+       (cond-> {:target target} selector (assoc :live-release? true)))
 
       (and (= "product-sync" command)
            target

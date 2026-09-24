@@ -551,6 +551,7 @@
           result
           (target-execution/synchronize!
            {:target :pkl
+            :prerequisites-fn (constantly :ready)
             :verify-fn
             (fn [{:keys [profile]}]
               (swap! calls conj [:verify profile])
@@ -602,6 +603,7 @@
           result
           (target-execution/synchronize!
            {:target :pkl
+            :prerequisites-fn (constantly :ready)
             :verify-fn
             (fn [{:keys [profile]}]
               (swap! calls conj [:verify profile])
@@ -668,6 +670,7 @@
                #(target-execution/pack!
                  {:target :pkl
                   :profile "pkl-parser"
+                  :prerequisites-fn (constantly :ready)
                   :pack-fn pack-fn})))))
       (is (= :stale-generated-product-commit
              (:reason
@@ -675,7 +678,89 @@
                #(target-execution/package!
                  {:target :pkl
                   :profile "pkl-parser"
+                  :prerequisites-fn (constantly :ready)
                   :pack-fn pack-fn
                   :package-fn
                   (fn [{:keys [pack-fn profile]}]
                     (pack-fn {:profile profile}))}))))))))
+
+(deftest prerequisites-do-not-require-generated-staging-or-a-future-product-commit
+  (let [{:keys [workspace contract]} (fixture!)]
+    (try
+      (delete-tree! (.resolve workspace "target"))
+      (is (string? (:base-commit
+                    (product-repository/verify-prerequisites!
+                     {:workspace-root workspace :target-contract contract}))))
+      (write! workspace "source-edit.clj" "; an unstaged authoring change\n")
+      (is (map? (product-repository/verify-prerequisites!
+                 {:workspace-root workspace :target-contract contract})))
+      (git! workspace "add" "source-edit.clj")
+      (is (= :dirty-parent-index
+             (:reason (failure #(product-repository/verify-prerequisites!
+                                 {:workspace-root workspace :target-contract contract})))))
+      (finally (delete-tree! workspace)))))
+
+(deftest prerequisites-reject-dirty-products-before-generation
+  (doseq [path ["CONTRIBUTING.md" "untracked.txt" "src/DripSharp.Brine/bin/untracked.dll"]]
+    (let [{:keys [workspace brine contract]} (fixture!)]
+      (try
+        ;; Remove fixture ignores so the output case reproduces the release failure.
+        (git! brine "config" "core.excludesfile" "/dev/null")
+        (write! brine ".gitignore" "")
+        (git! brine "add" ".gitignore")
+        (git! brine "commit" "-m" "Expose build outputs")
+        (git! workspace "add" "products/brine")
+        (git! workspace "commit" "-m" "Record fixture product")
+        (write! brine path "changed\n")
+        (is (= :dirty-checkout
+               (:reason (failure #(product-repository/verify-prerequisites!
+                                   {:workspace-root workspace :target-contract contract})))))
+        (is (= "changed\n" (slurp (str (.resolve brine path)))))
+        (finally (delete-tree! workspace))))))
+
+(deftest prerequisite-failure-starts-no-expensive-callback
+  (doseq [reason [:dirty-checkout :dirty-parent-index :gitlink-head-mismatch
+                  :missing-commit-property :inconsistent-version :windows-unavailable]
+          operation [target-execution/synchronize! target-execution/proof!
+                     target-execution/pack! target-execution/package!
+                     target-execution/prepare-publication!]]
+    (let [calls (atom 0)
+          expensive (fn [_] (swap! calls inc))
+          result (failure #(operation
+                            {:target :pdfcube :profile "pdfcube-preflight"
+                             :prerequisites-fn (fn [_] (throw (ex-info "precheck" {:reason reason})))
+                             :generate-fn expensive :verify-fn expensive :pack-fn expensive
+                             :package-fn expensive :proof-fn expensive :test-suites-fn expensive
+                             :synchronize-fn expensive :prepare-fn expensive}))]
+      (is (= reason (:reason result)))
+      (is (zero? @calls)))))
+
+(deftest prerequisites-reject-a-product-commit-ahead-of-parent-gitlink
+  (let [{:keys [workspace brine contract]} (fixture!)]
+    (try
+      (write! brine "README.md" "new committed product\n")
+      (git! brine "add" "README.md")
+      (git! brine "commit" "-m" "New product commit")
+      (is (= :gitlink-head-mismatch
+             (:reason (failure #(product-repository/verify-prerequisites!
+                                 {:workspace-root workspace :target-contract contract})))))
+      (finally (delete-tree! workspace)))))
+
+(deftest cached-package-results-recheck-the-live-product-boundary
+  (let [checks (atom 0)]
+    (with-redefs [dripsharp.proof-resume/pack! (fn [_ _] :cached-package)
+                  dripsharp.proof-resume/check! (fn [_ f] (f))]
+      (binding [dripsharp.proof-resume/*run* {:run-id "fixture"}]
+        (is (= :cached-package
+               (target-execution/pack!
+                {:target :pdfcube :profile "pdfcube-preflight"
+                 :prerequisites-fn (constantly :ready)
+                 :repository-proof-fn (fn [_] (swap! checks inc) :exact)})))
+        (is (= 1 @checks))
+        (is (= :stale-generated-product-commit
+               (:reason
+                (failure #(target-execution/pack!
+                           {:target :pdfcube :profile "pdfcube-preflight"
+                            :prerequisites-fn (constantly :ready)
+                            :repository-proof-fn
+                            (fn [_] (throw (ex-info "drift" {:reason :stale-generated-product-commit})))})))))))))

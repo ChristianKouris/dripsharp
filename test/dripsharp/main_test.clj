@@ -141,3 +141,15 @@
     (is (re-find
          #"\|rebaseline <pkl\|pdfcube\|rawhttp> \[--approve <token>\]"
          (ex-message error)))))
+
+(deftest release-prerequisite-and-resume-cli-options
+  (with-redefs [target-execution/prerequisites! identity
+                target-execution/proof! identity]
+    (is (= {:target "pdfcube"}
+           (main/dispatch! ["product-preflight" "pdfcube"])))
+    (is (= {:target "pdfcube" :live-release? true}
+           (main/dispatch! ["product-preflight" "pdfcube" "--live"])))
+    (is (= {:target "pdfcube" :resume-run "bounded-proof"}
+           (main/dispatch! ["proof" "pdfcube" "--resume" "bounded-proof"])))
+    (is (= :invalid-command-line
+           (:kind (failure-data #(main/dispatch! ["proof" "pdfcube" "--resume"])))))))

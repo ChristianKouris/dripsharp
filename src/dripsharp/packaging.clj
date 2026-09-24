@@ -1778,6 +1778,14 @@
 
 (defn- build-source-linked-projects!
   [run-command! build-configuration repository-commit specs]
+  ;; package-specs retains the dependency-first generation order. Each verified
+  ;; dependency has already been stamped when a dependent is rebuilt below.
+  (let [positions (zipmap (map :profile specs) (range))]
+    (doseq [[index {:keys [profile emission]}] (map-indexed vector specs)
+            dependency (:dependency-profiles emission)]
+      (when-not (< (get positions dependency Long/MAX_VALUE) index)
+        (fail! "Source-linked package builds require dependency-first order"
+               {:profile profile :dependency dependency}))))
   (doseq [{:keys [emission destination]} specs
           :when (= :snupkg (get-in destination [:package :symbols]))]
     (let [project-root (:project-root emission)
@@ -1787,6 +1795,7 @@
                   "--nologo" "--verbosity:minimal"
                   "--configuration" build-configuration
                   "--no-restore" "--no-incremental" "-warnaserror"
+                  "-p:BuildProjectReferences=false"
                   (str "-p:RepositoryCommit=" repository-commit)]
         :directory project-root}))))
 
@@ -1890,7 +1899,7 @@
   not perform independent package consumption."
   ([] (pack-verified-profile! {}))
   ([{:keys [workspace-root profile verify-fn run-command! inspect-resources-fn
-            repository-proof-fn]
+            repository-proof-fn proof-root]
      :or {verify-fn compiler/verify-clean-build!
           run-command! process/run!
           inspect-resources-fn inspect-package-assembly!}}]
@@ -1943,7 +1952,8 @@
          (let [package-assembly-names
                (mapv #(get-in % [:destination :project :assembly-name]) specs)
                proof-root (harness/clean-directory!
-                           (paths/resolve-path root "target" "package-proof"))
+                           (or proof-root
+                               (paths/resolve-path root "target" "package-proof")))
                second-output (doto (paths/resolve-path proof-root "second-pack")
                                (Files/createDirectories
                                 (make-array java.nio.file.attribute.FileAttribute 0)))

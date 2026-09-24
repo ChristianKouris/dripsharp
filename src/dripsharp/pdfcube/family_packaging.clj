@@ -7,6 +7,7 @@
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
+            [dripsharp.proof-resume :as proof-resume]
             [dripsharp.util :as util])
   (:import [java.nio ByteBuffer ByteOrder]
            [java.nio.file Files Path]
@@ -551,11 +552,17 @@
           consumer-fn packaging/verify-packed-consumer!
           run-command! process/run!}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
+         consumer-fn (fn [options]
+                       (proof-resume/check!
+                        [:family-consumer (:consumer-name options)]
+                        #(consumer-fn options)))
          package-proof
          (pack-fn {:workspace-root root
                    :profile "pdfcube-preflight"
                    :run-command! run-command!})
-         package-evidence (validate-package-family! package-proof)
+         package-evidence (proof-resume/check!
+                           :family-package-identity
+                           #(validate-package-family! package-proof))
          by-id
          (into {}
                (map (juxt #(get-in % [:identity :id]) identity))
@@ -595,7 +602,9 @@
            :target-framework execution-target-framework
            :run-command! run-command!})
          consumption
-         (validate-consumers! (conj product-consumers family-consumer))
+         (proof-resume/check!
+          :family-consumer-contract
+          #(validate-consumers! (conj product-consumers family-consumer)))
          summary
          {:source {:version (baseline/upstream-version :pdfcube)
                    :revision source-revision}

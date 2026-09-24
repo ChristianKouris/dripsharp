@@ -115,8 +115,8 @@ to restore, build, or run the generated test suites.
 
 Brine, PdfCarton, and SqlTrellis production libraries each have exactly one
 target framework, `netstandard2.0`. They do not multi-target and do not emit
-production `net10.0` or `net48` assets. Their generated test projects and every
-executable runner, probe, differential host, validation host, and isolated
+production `net10.0` or `net48` assets. Their generated test projects and ordinary
+executable runners, probes, differential hosts, validation hosts, and isolated
 package consumer target `net10.0` and reference or consume the
 `netstandard2.0` assemblies.
 
@@ -128,7 +128,11 @@ execution assumption from that contract. Package paths retain the lowercase
 `.NETStandard2.0` identifier. .NET Framework 4.8 compatibility is inferred from
 the `netstandard2.0` contract and compatible dependency assets; the repository
 performs no net48 runtime build or test and does not empirically certify net48
-execution.
+execution. PdfCarton's separate required Windows release harness additionally
+executes a focused exception-serialization check on installed .NET Framework
+4.8.1; its `net481` test executable is an exception to the normal `net10.0`
+execution-host convention, not another production target or a full Framework
+certification.
 
 ## Product-Owned NuGet Releases
 
@@ -139,6 +143,13 @@ outside the generator's declared managed paths, so normal generated-source
 synchronization preserves them. Generated production and test changes still
 originate in `dripsharp/dripsharp`; product-owned release tooling is not a
 route for editing generated C# into correctness.
+
+PdfCarton's hosted workflow separates prepare-only and publish-existing modes.
+The source-repository Windows command consumes the exact checksum-bound prepare
+artifact on the personal Windows host before dispatching publication; publish
+consumes that same artifact without repacking. A separate NuGet.org-only Windows
+check is required after indexing. See the runbook for supported commands and
+failure handling. Other products retain their existing release sequence.
 
 The release workflow accepts only `master` and builds the product commit that
 triggered that workflow run. It neither reruns the source-repository

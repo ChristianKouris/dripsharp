@@ -17,6 +17,7 @@
             [dripsharp.pdfcube.preflight-differential :as preflight]
             [dripsharp.pdfcube.xmpbox-metadata-differential :as xmpbox]
             [dripsharp.process :as process]
+            [dripsharp.proof-resume :as proof-resume]
             [dripsharp.util :as util])
   (:import [java.nio.file Files OpenOption Path StandardCopyOption
             StandardOpenOption]
@@ -491,7 +492,8 @@
             pack-fn (assoc :pack-fn pack-fn)))
          runtime-consumer (runtime-family-consumer! family-proof)
          _ (harness/clean-directory! (:consumer-root runtime-consumer))
-         views (package-views family-proof)
+         views (proof-resume/check! :family-profile-selection
+                                    #(package-views family-proof))
          proof-root
          (harness/clean-directory!
           (paths/resolve-path root "validation-output"

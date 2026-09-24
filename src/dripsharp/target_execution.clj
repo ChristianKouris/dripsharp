@@ -13,6 +13,8 @@
             [dripsharp.paths :as paths]
             [dripsharp.product-repository :as product-repository]
             [dripsharp.product-staging :as product-staging]
+            [dripsharp.proof-resume :as proof-resume]
+            [dripsharp.release-prerequisites :as release-prerequisites]
             [dripsharp.target-directory :as target-directory]))
 
 (defn- fail!
@@ -170,6 +172,19 @@
                      :available (vec (sort (keys prepared-destinations)))})))
        :profile-records profiles})))
 
+(defn- prerequisites-loaded! [execution options]
+  ((or (:prerequisites-fn options) release-prerequisites/check!)
+   (merge (select-keys options [:run-command! :live-release? :windows-host
+                                :windows-preflight-fn :repository-prerequisites-fn])
+          {:workspace-root (:workspace-root execution)
+           :target-contract (:contract execution)})))
+
+(defn prerequisites!
+  "Read-only readiness before synchronization, or with :live-release? immediately
+  before an independently authorized release dispatch. Never builds or publishes."
+  [options]
+  (prerequisites-loaded! (plan (assoc options :profile nil)) options))
+
 (defn- stage-options
   [options]
   (dissoc options
@@ -247,24 +262,33 @@
 
 (defn- pack-loaded!
   [execution options pack-fn verify-fn generate-fn]
-  (binding [baseline/*target-records* (:baseline-records execution)]
-    (pack-fn
-     (merge
-      (stage-options options)
-      {:workspace-root (:workspace-root execution)
-       :profile (profile-selection! (:profile execution))
-       :repository-proof-fn
-       (when (= :generated-repository
-                (get-in execution [:contract :publication :kind]))
-         #(product-repository/verify-synchronized!
-           {:workspace-root (:workspace-root execution)
-            :target-contract (:contract execution)}))
-       :verify-fn
-       #(verify-loaded! execution % verify-fn generate-fn)}))))
+  (let [repository-proof
+        (when (= :generated-repository (get-in execution [:contract :publication :kind]))
+          #((or (:repository-proof-fn options) product-repository/verify-synchronized!)
+            {:workspace-root (:workspace-root execution)
+             :target-contract (:contract execution)}))
+        result
+        (proof-resume/pack!
+         (assoc options :workspace-root (:workspace-root execution) :profile (:profile execution))
+         (fn [pack-options]
+           (binding [baseline/*target-records* (:baseline-records execution)]
+             (pack-fn
+              (merge
+               (stage-options pack-options)
+               {:workspace-root (:workspace-root execution)
+                :profile (profile-selection! (:profile execution))
+                :repository-proof-fn repository-proof
+                :verify-fn #(verify-loaded! execution % verify-fn generate-fn)})))))]
+    ;; Reusing a package result must never bypass the live no-drift boundary.
+    (when (and proof-resume/*run* repository-proof)
+      (proof-resume/check! [:exact-product-commit (:profile execution)] repository-proof))
+    result))
 
 (defn pack!
   [{:keys [pack-fn verify-fn generate-fn] :as options}]
   (let [execution (plan (update options :profile profile-selection!))]
+    (when (= :generated-repository (get-in execution [:contract :publication :kind]))
+      (prerequisites-loaded! execution options))
     (pack-loaded! execution options
                   (or pack-fn packaging/pack-verified-profile!)
                   (or verify-fn compiler/verify-clean-build!)
@@ -287,6 +311,8 @@
 (defn package!
   [{:keys [package-fn pack-fn verify-fn generate-fn] :as options}]
   (let [execution (plan (update options :profile profile-selection!))]
+    (when (= :generated-repository (get-in execution [:contract :publication :kind]))
+      (prerequisites-loaded! execution options))
     (package-loaded! execution options
                      (or package-fn packaging/verify-package-consumption!)
                      (or pack-fn packaging/pack-verified-profile!)
@@ -423,11 +449,17 @@
      ladders)))
 
 (defn proof!
-  "Runs every required proof ladder declared by one preflighted target.
-  Ladders are mandatory, exhaustive over target profiles and validations, and
-  carry their CI resource class in the target contract."
+  "Runs every required target proof ladder. :resume-run names local PdfCarton
+  package recovery; validators execute freshly against matching artifacts."
   [options]
-  (proof-loaded! (plan (assoc options :profile nil)) options))
+  (let [execution (plan (assoc options :profile nil))]
+    (when (= :generated-repository (get-in execution [:contract :publication :kind]))
+      (prerequisites-loaded! execution options))
+    (when (and (:resume-run options) (not= :pdfcarton (get-in execution [:contract :product-family])))
+      (fail! "Proof resume currently supports PdfCarton only" {:reason :unsupported-resume-target}))
+    (proof-resume/with-run!
+      {:workspace-root (:workspace-root execution) :run-id (:resume-run options)}
+      #(proof-loaded! execution options))))
 
 (defn- generated-publication!
   [execution]
@@ -448,19 +480,40 @@
 
 (defn- precommit-publication-proof!
   [execution options]
-  {:kind :pre-commit-generated-product
-   :frameworks (get-in execution [:contract :frameworks])
-   :profiles
-   (mapv
-    (fn [profile]
-      {:profile profile
-       :verification
-       (verify-loaded!
-        (assoc execution :profile profile)
-        (assoc options :profile profile)
-        (or (:verify-fn options) compiler/verify-clean-build!)
-        (or (:generate-fn options) harness/generate!))})
-    (map :id (get-in execution [:contract :manifest :profiles])))})
+  (let [profiles (mapv :id (get-in execution [:contract :manifest :profiles]))
+        family-profile (when (= :pdfcarton (get-in execution [:contract :product-family]))
+                         (get-in execution [:contract :publication :nuget :bundle :profile]))
+        selected (if family-profile [family-profile] profiles)
+        verifications
+        (mapv (fn [profile]
+                (verify-loaded! (assoc execution :profile profile)
+                                (assoc options :profile profile)
+                                (or (:verify-fn options) compiler/verify-clean-build!)
+                                (or (:generate-fn options) harness/generate!)))
+              selected)
+        family (first verifications)]
+    (when family-profile
+      (let [generation (:generation family)
+            emitted (conj (mapv :profile (:dependency-emissions generation))
+                          (get-in generation [:generation-profile :profile]))
+            expected-assemblies
+            (set (map #(get-in % [:destination :configuration :project :assembly-name])
+                      (vals (:profile-records execution))))
+            audits (get-in family [:public-surface :assemblies])]
+        (when-not (and (= (set profiles) (set emitted))
+                       (= (count profiles) (count emitted))
+                       (= expected-assemblies (set (map :assembly audits)))
+                       (= (count profiles) (count audits)))
+          (fail! "Family verification must compile and audit every declared profile exactly once"
+                 {:reason :incomplete-family-verification :profiles profiles
+                  :emitted emitted :audited (mapv :assembly audits)
+                  :expected-assemblies expected-assemblies}))))
+    {:kind :pre-commit-generated-product
+     :frameworks (get-in execution [:contract :frameworks])
+     :generation-invocations (count selected)
+     :profiles (mapv (fn [profile verification]
+                       {:profile profile :verification verification})
+                     profiles (if family-profile (repeat family) verifications))}))
 
 (defn- generated-test-suites!
   [execution options]
@@ -504,6 +557,7 @@
   [options]
   (let [execution (plan (assoc options :profile nil))
         _ (generated-publication! execution)
+        _ (prerequisites-loaded! execution options)
         precommit-proof (precommit-publication-proof! execution options)
         precommit-test-suites (generated-test-suites! execution options)
         precommit-cleanup (clean-publication-staging! execution options)
@@ -559,6 +613,7 @@
   [options]
   (let [execution (plan (assoc options :profile nil))
         _ (generated-publication! execution)
+        _ (prerequisites-loaded! execution options)
         proof (publication-proof! execution options)
         test-suite-verification
         ((or (:test-suites-fn options)

@@ -13,6 +13,33 @@
            [java.security MessageDigest]
            [java.util.zip ZipEntry ZipOutputStream]))
 
+(deftest source-linked-builds-compile-each-dependency-once-per-independent-pass
+  (let [profiles [["io" []] ["fonts" ["io"]] ["xmp" []]
+                  ["pdf" ["io" "fonts"]] ["preflight" ["io" "fonts" "pdf" "xmp"]]]
+        specs (mapv (fn [[profile dependencies]]
+                      {:profile profile
+                       :emission {:project-root (paths/path (str "/fixture/" profile))
+                                  :project-file (paths/path (str "/fixture/" profile "/project.csproj"))
+                                  :dependency-profiles dependencies}
+                       :destination {:package {:symbols :snupkg}}}) profiles)
+        commands (atom [])
+        run-command! (fn [options] (swap! commands conj (:command options)) {:exit 0})
+        commit "0123456789abcdef0123456789abcdef01234567"]
+    (dotimes [_ 2]
+      (#'packaging/build-source-linked-projects! run-command! "Release" commit specs))
+    (is (= 10 (count @commands)))
+    (is (= (concat (mapv #(str (get-in % [:emission :project-file])) specs)
+                   (mapv #(str (get-in % [:emission :project-file])) specs))
+           (map #(nth % 2) @commands)))
+    (is (every? #(some #{"-p:BuildProjectReferences=false"} %) @commands))
+    (is (every? #(some #{(str "-p:RepositoryCommit=" commit)} %) @commands))
+    (is (every? #(and (some #{"--no-incremental"} %)
+                      (some #{"--no-restore"} %)) @commands))
+    (reset! commands [])
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"dependency-first"
+                          (#'packaging/build-source-linked-projects! run-command! "Release" commit (reverse specs))))
+    (is (empty? @commands))))
+
 (def package
   {:id "DripSharp.Brine.Parser"
    :version "0.0.0-development"

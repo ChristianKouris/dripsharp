@@ -163,6 +163,15 @@ macOS on x64 and ARM64.
 not build or execute net48 and does not claim empirical .NET Framework 4.8
 runtime certification.
 
+Release verification additionally requires actual Windows x64 execution of the
+exact combined candidate package before publication and a separate NuGet.org
+restore/execution after indexing, as specified in the [release runbook](../../nuget-release-runbook.md).
+The personal Windows harness includes a narrowly scoped `net481` exception
+serialization executable on installed .NET Framework 4.8.1. This supplemental
+release check does not change production targets, expand the compatibility claim
+to general Framework certification, remove macOS coverage, or alter the product
+completion evidence rule. It adds no hosted Windows runner requirement.
+
 Approved standard-library and Microsoft-package mappings are recorded in
 [Dependency Mappings](dependencies.md). That document also records the
 SkiaSharp boundary and specialized capabilities implemented inside PdfCarton.

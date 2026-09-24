@@ -8,6 +8,7 @@
             [dripsharp.paths :as paths]
             [dripsharp.project :as project]
             [dripsharp.project-input :as project-input]
+            [dripsharp.proof-resume :as proof-resume]
             [dripsharp.public-surface :as public-surface]
             [dripsharp.spoon :as spoon]
             [dripsharp.tree-cleanup :as tree-cleanup]
@@ -1068,6 +1069,9 @@
   debugging baseline."
   ([] (generate! {}))
   ([options]
-   (concurrency/call-with-executor
-    {:worker-count (:worker-count options)}
-    #(generate-with-executor! options))))
+   (proof-resume/with-generation-lock!
+     options
+     (fn []
+       (concurrency/call-with-executor
+        {:worker-count (:worker-count options)}
+        #(generate-with-executor! options))))))

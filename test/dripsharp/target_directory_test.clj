@@ -5,9 +5,15 @@
             [dripsharp.java-mapping-registry :as mapping-registry]
             [dripsharp.target-directory :as target-directory]
             [dripsharp.target-execution :as target-execution]
+            [dripsharp.release-prerequisites :as release-prerequisites]
             [dripsharp.util :as util])
   (:import [java.nio.file FileVisitOption Files Path]
            [java.nio.file.attribute FileAttribute]))
+
+;; Target-directory fixtures deliberately contain no product Git repositories.
+;; Repository prerequisites have real-Git coverage in product-repository-test.
+(clojure.test/use-fixtures :each
+  (fn [f] (with-redefs [release-prerequisites/check! (constantly :fixture-ready)] (f))))
 
 (defn custom-validation-runner
   [_]

@@ -249,7 +249,9 @@ GitHub's [environment protection documentation][github-environments].
    their absence does not require renewed owner approval.
 4. In the product repository, open **Actions**, select the workflow named in
    the first table, choose **Run workflow**, select `master`, and dispatch it.
-   The equivalent GitHub CLI commands are:
+   PdfCarton defaults to prepare-only and requires the Windows artifact handoff
+   described below before its separate publication dispatch. The equivalent
+   preparation/dispatch commands are:
 
    ```sh
    gh workflow run nuget-release.yml --repo dripsharp/brine --ref master
@@ -259,7 +261,9 @@ GitHub's [environment protection documentation][github-environments].
 
    Run only the command for the product being released. Dispatch is an external
    action authorized by the owner's release request. Publication follows a
-   successful prepare job and any deployment gate actually configured.
+   successful prepare job and any deployment gate actually configured for Brine
+   and SqlTrellis. PdfCarton additionally requires the separate supported Windows
+   artifact handoff before publish mode is dispatched.
 5. Record the workflow-run URL and the triggering commit SHA shown by GitHub.
    The workflow rejects any ref other than `refs/heads/master`, then
    `actions/checkout` checks out that triggering product commit. It does not
@@ -301,7 +305,8 @@ unexpected values and honor any requirement for a different reviewer.
 
 Once any configured gate is satisfied, the publish job:
 
-1. downloads the artifact produced by that same workflow run;
+1. downloads the artifact produced by that same workflow run (or, for PdfCarton,
+   the exact prior prepare-only run bound to the Windows-tested checksum list);
 2. runs `sha256sum --check --strict SHA256SUMS` and rejects any unexpected or
    missing package;
 3. obtains a short-lived NuGet API key through the environment-bound trusted-
@@ -365,3 +370,142 @@ support requests are separate external actions. See NuGet's
 [nuget-delete]: https://learn.microsoft.com/en-us/nuget/nuget-org/policies/deleting-packages
 [nuget-deprecate]: https://learn.microsoft.com/en-us/nuget/nuget-org/deprecate-packages
 [nuget-trusted-publishing]: https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing
+
+## PdfCarton prerequisites and local recovery
+
+Before synchronization, run the read-only prerequisite check:
+
+```sh
+clojure -J-Xmx512m -M:run product-preflight pdfcube
+```
+
+The supported `product-sync`, `product-prepare`, `pack`, `package`, and full
+`proof` entry points perform the same check before expensive work. Target
+loading checks coordinated baseline/package versions. Repository checks reject
+uninitialized or dirty products, mismatched parent gitlinks and staged parent
+changes; staging need not exist and need not match the old product commit.
+The error lists affected paths. Remove only confirmed disposable build output;
+commit or preserve unrelated edits deliberately. Nothing is cleaned or stashed
+by preflight. Required release scripts and the workflow's exact triggering
+commit properties are checked before generation.
+
+PdfCarton preflight also checks the configured Windows SSH host, installed
+stable .NET 10 SDK/runtime, Framework 4.8.1, x64 architecture and available
+memory/disk. Set `PDFCARTON_WINDOWS_HOST` to an existing SSH alias when needed.
+An unavailable host, missing runtime, or insufficient capacity is an actionable
+failure, never a skipped pass. Do not install tools, reboot the guest or change
+SSH security as part of this check. Read the installed `windows-testing` skill
+and its environment, storage and remote-command guidance before execution.
+
+For a live owner-authorized release, also run
+`product-preflight pdfcube --live` before preparation and again immediately
+before dispatch. It reads current GitHub workflow, Actions and environment
+settings and confirms that the public NuGet version is unused. Empty environment
+protection rules remain valid. These checks do not publish or reserve a version.
+The hosted publish job repeats version availability immediately before upload.
+
+PdfCarton pre-commit preparation generates the complete dependency family once
+through `pdfcube-preflight`, builds its dependency graph and audits all five
+assemblies. It rejects missing or duplicate profile/audit evidence. It does not
+separately regenerate transitive dependencies for each profile. The two
+independent package reproducibility builds remain independent. Within each
+stamping pass, projects build in dependency order with project-reference builds
+disabled, so already stamped dependencies are not recursively rebuilt. The
+initial clean compiled-surface build and the later exact-commit stamping build
+remain distinct.
+
+To retain a successful package stage when a later validator fails, select a
+local run name on the **first** attempt and reuse it on retry:
+
+```sh
+DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run proof pdfcube --resume release-check
+```
+
+Run state and isolated package feeds live under
+`validation-output/pdfcarton-proof-runs/release-check/`, outside generation
+cleanup. A workspace file lock excludes conflicting generation. The phase log
+marks executed, failed and reused stages; reuse is not a fresh build pass.
+Only a completed package stage with matching input fingerprints and unchanged,
+present outputs can be reused. Source, runtime, mapping, configuration, upstream,
+package version, product commit, release metadata, build options or toolchain
+changes invalidate it. Parent HEAD alone is not an input. The explicitly named
+family/differential validator files are excluded from package inputs, and all
+validators and consumers run freshly on every retry. Unknown source changes
+rebuild. Missing or modified outputs also rebuild. No old validator pass is
+substituted for the repaired check.
+
+This package recovery command does not certify a new synchronization or waive
+its final shipped tests, exact-commit comparison or no-drift checks. Complete
+the required synchronization procedure before release. Candidate and published
+Windows verification are separate commands and result directories; neither
+accepts a previous Windows or macOS result. A checker-only retry can reuse the
+unchanged package archive while executing the corrected tests again.
+
+## Required PdfCarton Windows artifact handoff
+
+PdfCarton's release workflow defaults to `mode=prepare`: it builds and verifies
+on the existing hosted runner, retains the exact public package pair and
+`SHA256SUMS`, and **does not publish**. The publish mode consumes that successful
+prepare run without generation, rebuilding or repacking. Brine and SqlTrellis
+retain their existing workflow sequence.
+
+To inspect a prepared artifact without publishing, use the optional diagnostic
+command below. During an authorized release, use `publish-prepared` directly;
+it includes this verification, so both commands are not required:
+
+```sh
+python3 scripts/verify-pdfcarton-windows.py verify-prepared \
+  --run-id PREPARE_RUN_ID --version VERSION --commit FULL_PRODUCT_SHA
+```
+
+This command downloads the successful master workflow's package pair, checks its
+inventory/checksums and embedded product commit, transfers it into a new owned
+short `C:\WT` run directory, and restores into a fresh isolated package cache.
+The combined public package is the sole product PackageReference: no source or
+project references supply production assemblies. Existing mandatory smoke and
+five-assembly consumers execute on Windows x64/.NET 10, with installed-font
+initialization, empty-home/cache fallback, IO/Fonts URI handling, discovered-font
+PDF save/reload and native rendering. A separate bounded `net481` executable
+runs the four compatibility exception types in their three runtime copies on
+actual .NET Framework 4.8.1, preserving serialized state. Production remains
+`netstandard2.0`; this is not a general Framework certification or exhaustive
+platform matrix.
+
+When the owner has authorized publication, the supported dispatch command is:
+
+```sh
+python3 scripts/verify-pdfcarton-windows.py publish-prepared \
+  --run-id PREPARE_RUN_ID --version VERSION --commit FULL_PRODUCT_SHA
+```
+
+It performs the exact candidate Windows check, then rechecks live release
+prerequisites and remote master before dispatch. Failure, missing results,
+transport timeout, runtime absence, stale identity or changed artifact bytes
+stop before dispatch. The publish job checks the successful prepare-only run,
+same product SHA and supplied checksum-list digest before uploading those exact
+Windows-tested bytes. Do not dispatch `mode=publish` manually around this
+command. Honor any configured environment protections; no extra owner approval
+is introduced for an unprotected environment.
+
+After upload and indexing, run the distinct published-feed check:
+
+```sh
+python3 scripts/verify-pdfcarton-windows.py published \
+  --version VERSION --commit FULL_PRODUCT_SHA
+```
+
+It restores from NuGet.org only into another empty Windows cache and executes
+the same bounded coverage. Published archive signatures may change its hash;
+ID, version, repository commit and the five-assembly contract must still match.
+Upload acceptance alone is not completed remote verification. Report a failed
+or pending published check separately and do not republish the immutable version.
+
+For an already-built local candidate, `candidate --package FILE --version VERSION
+--commit FULL_PRODUCT_SHA` runs the same tests without a workflow or production
+regeneration. `--host` and `--results` configure host and local result directory.
+Normal `target/windows-tests/<run>/` output includes the request/input digest,
+resource/runtime observations, per-stage timings and exit codes, package identity,
+TRX and stdout/stderr logs retrieved even when a check fails. Unavailable or
+missing results never count as success. Preserve relevant logs before later
+clean generation removes disposable `target/` output. Run guest work sequentially
+and sized to its measured capacity; never send the Mac's worker/heap settings.

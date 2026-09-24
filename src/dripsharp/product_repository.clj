@@ -445,7 +445,11 @@
              {:reason :dirty-checkout
               :subject subject
               :path (str directory)
-              :status status}))
+              :status status
+              :disposable-build-paths
+              (filterv #(re-find #"(?i)(?:^|/)(?:bin|obj)/" %)
+                       (str/split-lines status))
+              :correction "Remove only confirmed disposable build output; commit or preserve unrelated edits before retrying."}))
     status))
 
 (defn- parent-path-clean!
@@ -507,7 +511,8 @@
        [path state]))))
 
 (defn- preflight!
-  [{:keys [workspace-root run-command! allow-transient-build-artifacts?]
+  [{:keys [workspace-root run-command! allow-transient-build-artifacts?
+           prerequisites-only?]
     :as options
     :or {run-command! process/run!}}]
   (let [workspace-root
@@ -522,8 +527,9 @@
                                       "Product staging path")
         product (safe-contained-path! workspace-root submodule-path
                                       "Product submodule path")
-        _ (when-not (and (directory-no-follow? staging)
-                         (paths/real-contained? workspace-root staging))
+        _ (when-not (or prerequisites-only?
+                        (and (directory-no-follow? staging)
+                             (paths/real-contained? workspace-root staging)))
             (fail! "Product staging directory is missing or escaped"
                    {:reason :invalid-staging-directory
                     :path (str staging)}))
@@ -534,8 +540,9 @@
             (fail! "Product submodule is missing or uninitialized"
                    {:reason :uninitialized-product-submodule
                     :path (str product)}))
-        _ (validate-managed-sources! staging managed-paths
-                                     allow-transient-build-artifacts?)
+        _ (when-not prerequisites-only?
+            (validate-managed-sources! staging managed-paths
+                                       allow-transient-build-artifacts?))
         _ (validate-managed-destinations! product managed-paths)
         entries (gitmodule-entries workspace-root run-command!)
         matches (filterv #(= submodule-path (:path %)) entries)
@@ -585,8 +592,9 @@
         other-products
         (other-product-states! workspace-root run-command!
                                entries submodule-path)
-        inventory (managed-inventory staging managed-paths excluded-paths
-                                     allow-transient-build-artifacts?)]
+        inventory (when-not prerequisites-only?
+                    (managed-inventory staging managed-paths excluded-paths
+                                       allow-transient-build-artifacts?))]
     {:workspace-root workspace-root
      :target-contract target-contract
      :publication publication
@@ -598,6 +606,13 @@
      :inventory inventory
      :source-sha256 (inventory-sha256 inventory)
      :run-command! run-command!}))
+
+(defn verify-prerequisites!
+  "Checks repository/index prerequisites before generation. Does not require
+  staging to exist or match the current product commit; never mutates work."
+  [options]
+  (select-keys (preflight! (assoc options :prerequisites-only? true))
+               [:base-commit :product :publication :other-products]))
 
 (defn verify-synchronized!
   "Proves that clean generated-product HEAD contains exactly the managed staged
