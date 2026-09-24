@@ -10539,7 +10539,8 @@
              (csharp/with-source
                (translated-node ctx (.getBody ^CtAnonymousExecutable member))
                (source-ref member :java-library.declaration/static-initializer nil))))
-         events))))
+         events)
+    (:static-initialization-tail ctx))))
 
 (defn- static-initializer-node
   [ctx ^CtType owner ^CtAnonymousExecutable initializer]
@@ -11424,6 +11425,9 @@
                      :defer-field-initializers? (boolean (seq deferred-fields))
                      :deferred-field-initializers (into deferred-fields deferred-static-fields)
                      :static-initialization-events static-initialization-events
+                     :static-initialization-tail
+                     (when-let [tail (:static-initialization-tail-fn ctx)]
+                       (tail type))
                      :instance-initialization-events initialization-events})
         member-nodes (if-let [emit-members (:emit-members ctx)]
                        (emit-members member-ctx type members)
@@ -11431,6 +11435,7 @@
         member-nodes
         (cond-> member-nodes
           (and (or (seq static-initialization-events)
+                   (seq (:static-initialization-tail member-ctx))
                    (superclass-initialization-node member-ctx type))
                (not-any? #(and (instance? CtAnonymousExecutable %)
                                (.hasModifier ^CtModifiable % ModifierKind/STATIC)) members))

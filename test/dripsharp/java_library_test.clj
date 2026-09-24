@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [dripsharp.concurrency :as concurrency]
+            [dripsharp.csharp :as csharp]
             [dripsharp.java-library :as java-library]
             [dripsharp.java-project :as project-emission]
             [dripsharp.java-translate :as java]
@@ -6846,6 +6847,47 @@
                                :command ["dotnet" "build" (:project-file first)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest static-initialization-tail-runs-after-fields-and-blocks-once
+  (let [fixture
+        (model! {"example/FieldOnly.java"
+                 "package example; public class FieldOnly { public static int VALUE = 2; }"
+                 "example/WithBlock.java"
+                 "package example; public class WithBlock { public static int VALUE = 2; static { VALUE += 3; } }"
+                 "example/TailOnly.java"
+                 "package example; public class TailOnly { public static int VALUE; }"})
+        bundle (java-library/rule-bundle)
+        create-context (get-in bundle [:rules :structural-declarations :create-context])
+        emission
+        (with-redefs [java-library/rule-bundle
+                      (fn []
+                        (assoc-in bundle [:rules :structural-declarations :create-context]
+                                  (fn [options]
+                                    (create-context
+                                     (assoc options :static-initialization-tail-fn
+                                            (fn [_]
+                                              [(csharp/raw "VALUE = VALUE * 10 + 1;")]))))))]
+          (emit! fixture 3))
+        consumer-root (temp-directory)
+        _ (write-sources!
+           consumer-root
+           {"Consumer.csproj"
+            (str "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup>"
+                 "<OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework>"
+                 "<TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup>"
+                 "<ItemGroup><ProjectReference Include=\"" (:project-file emission)
+                 "\" /></ItemGroup></Project>")
+            "Program.cs"
+            (str "using Example.Java.Library;\n"
+                 "if (FieldOnly.VALUE != 21) return 1;\n"
+                 "if (WithBlock.VALUE != 51) return 2;\n"
+                 "if (TailOnly.VALUE != 1) return 3;\n"
+                 "if (WithBlock.VALUE != 51) return 4;\n"
+                 "return 0;\n")})
+        result (process/run! {:directory consumer-root
+                              :command ["dotnet" "run" "--project" "Consumer.csproj"
+                                        "--configuration" "Release" "--verbosity:quiet"]})]
+    (is (zero? (:exit result)) (:output result))))
 
 (deftest instance-initializer-blocks-merge-into-root-constructors
   (let [fixture

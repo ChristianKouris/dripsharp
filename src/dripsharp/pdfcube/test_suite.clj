@@ -1274,13 +1274,19 @@
   (let [before-all (get-in class-plan [:lifecycle :before-all])
         after-all (get-in class-plan [:lifecycle :after-all])]
     (when (and (seq before-all) (empty? after-all))
-      (str "private static readonly bool __UpstreamBeforeAll = "
-           "__RunUpstreamBeforeAll();\n\n"
+      (str "private static readonly bool __UpstreamBeforeAll;\n\n"
            "private static bool __RunUpstreamBeforeAll()\n{\n"
            (apply str
                   (map #(str "    " (method-name! methods %) "();\n")
                        before-all))
            "    return true;\n}"))))
+
+(defn- class-lifecycle-tail [class-plan]
+  ;; CLR field initializers precede the explicit static constructor. Test
+  ;; lifecycle calls must instead follow Java field and static-block setup.
+  (when (and (seq (get-in class-plan [:lifecycle :before-all]))
+             (empty? (get-in class-plan [:lifecycle :after-all])))
+    [(csharp/raw "__UpstreamBeforeAll = __RunUpstreamBeforeAll();")]))
 
 (defn- emitted-members [base-translate-member plan semantic-errors]
   (let [methods (method-index plan)
@@ -2437,6 +2443,9 @@
           :public-api-declaration-keys #{}
           :runtime-capabilities (:runtime-capabilities bundle)
           :blocker-start 0
+          :static-initialization-tail-fn
+          (fn [^CtType owner]
+            (class-lifecycle-tail (get-in plan [:classes (.getQualifiedName owner)])))
           :emit-members
           (emitted-members base-translate-member plan semantic-errors)})
         context (-> context
