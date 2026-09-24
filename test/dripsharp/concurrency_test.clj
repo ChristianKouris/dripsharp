@@ -64,3 +64,33 @@
     (is (= 1 (:item-index (ex-data error))))
     (is (= "boom" (some-> error .getCause .getMessage)))
     (is (empty? (live-threads-with-prefix "dripsharp-worker-")))))
+
+
+(deftest failed-translation-cancels-running-siblings-without-deadlock
+  (let [arrived (java.util.concurrent.CountDownLatch. 2)
+        interrupted (atom 0)
+        error (try
+                (concurrency/call-with-executor
+                 {:worker-count 3 :thread-prefix "dripsharp-cancel-test"}
+                 #(concurrency/mapv-ordered
+                   :translation
+                   (fn [index]
+                     (if (zero? index)
+                       (do
+                         (when-not (.await arrived 2 java.util.concurrent.TimeUnit/SECONDS)
+                           (throw (ex-info "siblings never started" {})))
+                         (throw (ex-info "first translation failed" {})))
+                       (do
+                         (.countDown arrived)
+                         (try
+                           (Thread/sleep 10000)
+                           (catch InterruptedException error
+                             (swap! interrupted inc)
+                             (throw error))))))
+                   (range 3)))
+                nil
+                (catch clojure.lang.ExceptionInfo error error))]
+    (is (= "first translation failed" (some-> error .getCause .getMessage)))
+    (is (= 0 (:item-index (ex-data error))))
+    (is (= 2 @interrupted))
+    (is (empty? (live-threads-with-prefix "dripsharp-cancel-test")))))

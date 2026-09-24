@@ -848,6 +848,7 @@
          rule-bundle :rule-bundle
          selection :public-surface-strategy}
         (get-in graph [:prepared profile-name])
+        discovery-started (System/nanoTime)
         input-model
         (validate-project-input-fn
          (or project-input
@@ -872,6 +873,7 @@
                :generation-profile generation-profile)
         surface (public-surface/read! selection root)
         seeds (merge-seeds (:seeds generation-profile) (:seeds surface))
+        model-started (System/nanoTime)
         java-model
         (if (seq seeds)
           (build-resolved-closure-fn root input-model seeds)
@@ -880,6 +882,7 @@
         (public-surface/validate-selected! selection root surface java-model)
         emission-public-api-boundary
         (public-surface/emission-boundary selection surface dependency-emissions)
+        emission-started (System/nanoTime)
         emission
         (finish-emission!
          selection surface
@@ -890,8 +893,18 @@
                            :public-api-boundary emission-public-api-boundary
                            :configuration destination
                            :rule-bundle rule-bundle})
-         destination)]
+         destination)
+        finished (System/nanoTime)
+        phase-timings {:input-discovery-millis (/ (- model-started discovery-started) 1e6)
+                       :model-resolution-millis (/ (- emission-started model-started) 1e6)
+                       :translation-emission-millis (/ (- finished emission-started) 1e6)}]
+    (println (str "Generation phases " profile-name ": " (pr-str phase-timings)
+                  "; translation "
+                  (pr-str (select-keys (:emission-profile emission)
+                                       [:configured-workers :worker-participation
+                                        :peak-concurrency]))))
     {:profile profile-name
+     :phase-timings phase-timings
      :dependency-profiles (get-in graph [:dependencies profile-name])
      :transitive-dependency-profiles
      (transitive-dependency-profiles graph profile-name)
@@ -907,9 +920,10 @@
 (defn- emission-record
   [{:keys [profile dependency-profiles transitive-dependency-profiles
            source-project project-input java-model public-api-boundary
-           public-surface-strategy destination emission]}]
+           public-surface-strategy destination emission phase-timings]}]
   (assoc emission
          :profile profile
+         :phase-timings phase-timings
          :dependency-profiles dependency-profiles
          :transitive-dependency-profiles transitive-dependency-profiles
          :source-project source-project
@@ -959,6 +973,7 @@
               verify-checkout-fn)]))
          (:preparation-order graph))
         target (clean-directory! (paths/resolve-path root "target"))
+        discovery-started (System/nanoTime)
         discovery
         (discover-project-inputs!
          {:root root
@@ -966,12 +981,17 @@
           :graph graph
           :source-projects source-projects
           :discover-reactor-fn discover-reactor-fn})
+        discovery-millis (/ (- (System/nanoTime) discovery-started) 1e6)
         project-inputs (:inputs discovery)
         generated (atom {})
         _ (doseq [level (:levels graph)]
             (let [results
-                  (concurrency/mapv-ordered
-                   :project-dag-generation
+                  ;; Keep the DAG coordinator off the worker pool: each project
+                  ;; resolves its mutable Spoon model serially, then submits its
+                  ;; independent declarations to the one shared bounded pool.
+                  ;; A worker waiting on those declarations would serialize them
+                  ;; (or deadlock if the nested-worker guard were removed).
+                  (mapv
                    (fn [profile-name]
                      (let [dependency-profiles
                            (transitive-dependency-profiles graph profile-name)
@@ -1015,6 +1035,7 @@
         (count (project-input/production-source-files input-model))
         resources (get-in config [:project-input :production-resources])]
     (spit (str config-file) (str (pr-str config) "\n"))
+    (println (format "Shared input discovery: %.3f ms" discovery-millis))
     (println (format "Prepared %s: %d production Java files, %d production resource%s, %d classpath entries."
                      (:project-id input-model)
                      source-count
@@ -1028,6 +1049,8 @@
     (println "Declaration emission:" (pr-str (:summary emission)))
     (println "Disposable configuration:" (portable-path root config-file))
     (assoc config
+           :phase-timings (assoc (:phase-timings main)
+                                 :shared-input-discovery-millis discovery-millis)
            :java-model java-model
            :resolved-project-input input-model
            :public-api-boundary surface

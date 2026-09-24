@@ -1363,6 +1363,17 @@
                               (get-in rule-bundle [:rules :resolved-mappings])
                               :runtime-capabilities
                               (:runtime-capabilities rule-bundle)))))
+        translation-observed (atom {:active 0 :peak-concurrency 0 :threads #{}})
+        observe-translation
+        (fn [f job]
+          (swap! translation-observed
+                 (fn [{:keys [active] :as observed}]
+                   (-> observed
+                       (update :active inc)
+                       (update :peak-concurrency max (inc active))
+                       (update :threads conj (.getName (Thread/currentThread))))))
+          (try (f job)
+               (finally (swap! translation-observed update :active dec))))
         emission-profile (atom {:root-count (count scheduled-roots)
                                 :average-root-weight average-root-weight
                                 :largest-root
@@ -1474,12 +1485,13 @@
                           results
                           (concurrency/mapv-ordered
                            :root-and-member-translation
-                           (fn [{:keys [kind index member] :as job}]
-                             (case kind
-                               :root {:kind :root :index index
-                                      :result (emit-root! job nil)}
-                               :member (translate-member! dominant-ctx
-                                                          root-index owner index member)))
+                           (partial observe-translation
+                                    (fn [{:keys [kind index member] :as job}]
+                                      (case kind
+                                        :root {:kind :root :index index
+                                               :result (emit-root! job nil)}
+                                        :member (translate-member! dominant-ctx
+                                                                   root-index owner index member))))
                            jobs)
                           member-results (sort-by :index (filter #(= :member (:kind %)) results))
                           roots (mapv :result (sort-by :index (filter #(= :root (:kind %)) results)))
@@ -1504,7 +1516,7 @@
                 (conj @ordinary-results dominant-result))
               (concurrency/mapv-ordered
                :declaration-translation-and-emission
-               #(emit-root! % nil)
+               (partial observe-translation #(emit-root! % nil))
                (balanced-work-order
                 (mapv #(assoc % :kind :root) scheduled-roots))))))
         declaration-results (vec (sort-by :index declaration-results))
@@ -1651,7 +1663,11 @@
        :rule-bundle (:id rule-bundle)
        :mapping-report mapping-report
        :summary summary
-       :emission-profile @emission-profile
+       :emission-profile (assoc @emission-profile
+                                :configured-workers (concurrency/current-worker-count)
+                                :worker-threads (vec (sort (:threads @translation-observed)))
+                                :worker-participation (count (:threads @translation-observed))
+                                :peak-concurrency (:peak-concurrency @translation-observed))
        :diagnostics (:diagnostics ctx)
        :declarations (:declarations ctx)
        :artifacts artifacts

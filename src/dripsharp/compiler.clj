@@ -79,7 +79,9 @@
          generation-options (cond-> {:profile profile}
                               workspace-root
                               (assoc :workspace-root workspace-root))
+         generation-started (System/nanoTime)
          generation (generate-fn generation-options)
+         generation-millis (/ (- (System/nanoTime) generation-started) 1e6)
          emission (:emission generation)
          ^Path project-root (:project-root emission)
          project-file (:project-file emission)
@@ -93,20 +95,27 @@
                   "--verbosity:minimal" "--no-incremental"
                   "-p:RestoreIgnoreFailedSources=true" "-warnaserror"]]
      (try
-       (let [result (run-command! {:command command :directory project-root})
+       (let [build-started (System/nanoTime)
+             result (run-command! {:command command :directory project-root})
+             build-millis (/ (- (System/nanoTime) build-started) 1e6)
              diagnostics (parse-diagnostics (:output result))]
          (when (seq diagnostics)
            (throw (ex-info (str "Clean " package-id " build emitted compiler diagnostics")
                            {:kind :compiler-diagnostics
                             :diagnostics (map-diagnostics project-root source-map diagnostics)
                             :output (:output result)})))
-         (let [public-surface
+         (let [api-started (System/nanoTime)
+               public-surface
                (verify-public-surface-fn
-                (or workspace-root (paths/workspace-root)) generation build-configuration)]
+                (or workspace-root (paths/workspace-root)) generation build-configuration)
+               phase-timings {:generation-millis generation-millis
+                              :build-millis build-millis
+                              :compiled-api-millis (/ (- (System/nanoTime) api-started) 1e6)}]
+           (println (str "Verification phases " package-id ": " (pr-str phase-timings)))
            (println (str "Clean " package-id " compilation: 0 warnings, 0 errors"))
            (println (str "Compiled public contract: " (pr-str public-surface)))
            {:generation generation :build result :build-configuration build-configuration
-            :diagnostics [] :public-surface public-surface}))
+            :diagnostics [] :public-surface public-surface :phase-timings phase-timings}))
        (catch ExceptionInfo error
          (let [data (ex-data error)]
            (if (= :command-failed (:kind data))

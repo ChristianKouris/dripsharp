@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [dripsharp.baseline :as baseline]
+            [dripsharp.concurrency :as concurrency]
             [dripsharp.harness :as harness]
             [dripsharp.java-library :as java-library]
             [dripsharp.java-project :as java-project]
@@ -624,7 +625,7 @@
            (harness/configuration root "revision"
                                   (project-input/validate! reversed))))))
 
-(deftest independent-dependency-profiles-run-concurrently-and-collate-in-order
+(deftest independent-dependency-profiles-coordinate-on-caller-and-collate-in-order
   (let [root (temp-directory)
         discovery (fixture-discovery root)
         dependency-threads (atom #{})
@@ -672,7 +673,7 @@
            (mapv :profile (:dependency-emissions result))))
     (is (= ["dependency-b.edn" "dependency-a.edn"]
            (mapv #(get-in % [:destination :file]) (:dependency-emissions result))))
-    (is (= 2 (count @dependency-threads)))))
+    (is (= #{(.getName (Thread/currentThread))} @dependency-threads))))
 
 (defn- dag-profile
   [profile dependencies]
@@ -951,3 +952,69 @@
     (is (= ["../wrong/Wrong.csproj"] (:actual (ex-data error))))
     (is (false? @checkout?))
     (is (paths/regular-file? stale))))
+
+
+(defn- generation-scheduling-fixture!
+  [dependencies worker-count translate]
+  (let [root (temp-directory)
+        discovery (fixture-discovery root)]
+    (harness/generate!
+     {:workspace-root root :profile "main" :worker-count worker-count
+      :read-profile-fn (fn [_ profile] (dag-profile profile (get dependencies profile)))
+      :read-destination-fn (fn [_ file] (dag-destination (subs file 0 (- (count file) 4))))
+      :verify-checkout-fn (fn [options] {:path (:project-root options)})
+      :discover-main-fn (fn [{:keys [gradle-project]}] (assoc discovery :project-id gradle-project))
+      :build-resolved-model-fn (fn [& _] (empty-model))
+      :emit-project-fn
+      (fn [{:keys [target project-input configuration]}]
+        (let [profile (subs (:project-id project-input) 1)
+              project-root (paths/resolve-path target (get-in configuration [:output :project-directory]))]
+          (translate profile)
+          {:project-root project-root
+           :project-file (paths/resolve-path project-root (get-in configuration [:output :project-file]))
+           :summary {:compilation-units 0}}))})))
+
+(deftest project-coordinator-leaves-workers-available-for-translation
+  (doseq [dependencies [{"main" []}
+                        {"main" ["left" "right"] "left" ["base"] "base" [] "right" []}]
+          workers [1 3]]
+    (let [finished (atom #{})
+          participation (atom {})
+          result
+          (generation-scheduling-fixture!
+           dependencies workers
+           (fn [profile]
+             (is (not concurrency/*worker-task?*) "project orchestration must stay off the pool")
+             (is (every? @finished (get dependencies profile)))
+             (let [arrived (java.util.concurrent.CountDownLatch. workers)
+                   values (concurrency/mapv-ordered
+                           :fixture-translation
+                           (fn [index]
+                             (swap! participation update profile (fnil conj #{}) (.getName (Thread/currentThread)))
+                             (.countDown arrived)
+                             (is (.await arrived 2 java.util.concurrent.TimeUnit/SECONDS)
+                                 "all configured workers actually enter translation")
+                             index)
+                           (range 12))]
+               (is (= (vec (range 12)) values)))
+             (swap! finished conj profile)))]
+      (is (= (set (keys dependencies)) @finished))
+      (is (every? #(= workers (count %)) (vals @participation)))
+      (is (every? #(and (number? %) (not (neg? %))) (vals (:phase-timings result)))))))
+
+(deftest translation-failure-stops-dependent-projects
+  (let [projects (atom [])
+        error (try
+                (generation-scheduling-fixture!
+                 {"main" ["dependency"] "dependency" []} 3
+                 (fn [profile]
+                   (swap! projects conj profile)
+                   (concurrency/mapv-ordered
+                    :fixture-translation
+                    (fn [index] (if (zero? index) (throw (ex-info "translation failed" {})) index))
+                    (range 8))))
+                nil
+                (catch clojure.lang.ExceptionInfo error error))]
+    (is (= ["dependency"] @projects))
+    (is (= :fixture-translation (:phase (ex-data error))))
+    (is (= 0 (:item-index (ex-data error))))))
