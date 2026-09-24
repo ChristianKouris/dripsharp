@@ -10,7 +10,7 @@ The Pkl product boundary is defined by its
 [Authoritative Product Goal](targets/pkl/product-goal.md) and
 [Port Scope](targets/pkl/port-scope.md). Other product targets define their own
 contracts under [`targets/`](targets/). Temporary sequencing and status belong
-in Beads, not in this document.
+in the session's agreed task tracker or conversation, not in this document.
 
 Generated product publication is governed by the
 [Product Repository Contract](product-repositories.md). DripSharp is the

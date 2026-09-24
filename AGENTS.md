@@ -37,18 +37,20 @@ user-approved SqlTrellis exclusion list says otherwise. Changes to the
 SqlTrellis goal, exclusions, synchronization policy, shipped-test policy, or
 completion semantics require explicit user approval.
 
-Use Beads, not `doc/`, for temporary planning, current status,
-next-slice selection, progress logs, and deferred follow-up work. Documentation
+Use the session's agreed task tracker for temporary planning, current status,
+next-slice selection, progress logs, and deferred follow-up work. If no tracker
+is selected, report these in the conversation. Documentation
 should contain only durable product goals, architecture, contracts, and
 reference material.
 
 When a worker observes a concrete product defect or missing product behavior,
-search Beads first. If it is not required to complete the current issue, file a
-deduplicated follow-up with reproducible evidence and acceptance criteria under
-the appropriate epic. Missing one-to-one analogues for upstream test cases,
+search existing tracked work first. If it is not required to complete the current
+issue, record a deduplicated follow-up with reproducible evidence and acceptance
+criteria under the appropriate epic, or report it in the conversation when no
+tracker is selected. Missing one-to-one analogues for upstream test cases,
 helpers, fixtures, or support types are not by themselves product gaps. If a
 concrete product defect blocks the current issue, record the dependency and do
-not close the issue prematurely. Beads issues must not narrow the product goal
+not close the issue prematurely. Issues must not narrow the product goal
 or introduce new exclusions.
 
 Upstream tests are authoritative sources for required behavior, but they do not

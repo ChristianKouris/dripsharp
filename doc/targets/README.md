@@ -16,8 +16,8 @@ Every target directory contains:
 
 Add durable target-specific architecture, mappings, or validation documents
 only when they cannot be expressed in the shared translator documentation.
-Current status, milestone plans, and deferred work belong in Beads rather than
-the target directory.
+Current status, milestone plans, and deferred work belong in the session's
+agreed task tracker or conversation rather than the target directory.
 
 ## Independence Rules
 

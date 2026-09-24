@@ -27,7 +27,7 @@ Do this before browsing upstream or proposing scope. Preserve these repository r
 - Distinguish a proposed product-scope choice from an implementation slice.
 - Keep target-specific semantics outside product-neutral translation layers.
 - Put temporary assessment files outside `doc/`; prefer a caller-created temporary directory.
-- Do not create or modify a product goal, target, Beads issue, repository, or submodule unless separately authorized.
+- Do not create or modify a product goal, target, issue, repository, or submodule unless separately authorized.
 
 ## Investigate the candidate
 

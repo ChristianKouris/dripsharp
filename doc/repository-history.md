@@ -116,7 +116,7 @@ twelve days. Its subjects show recurring local progress loops:
 * expanding or constraining selected source slices;
 * repeatedly extending Spoon retry budgets and companion-source recovery;
 * generating stubs, suppressing stubs, and ratcheting acceptance counters;
-* closing narrowly defined Beads epics and then opening the next adjacent
+* closing narrowly defined epics and then opening the next adjacent
   widening or diagnostic task.
 
 There was real progress on parsing, generation, schema codegen, imports,
@@ -143,7 +143,7 @@ The rewind was deliberate and recoverable:
 2. At 21:27, the `master` reflog records `reset: moving to 1d09c0da...`.
 3. At 21:45, `bb1c2335` committed "Reset Vibeformer around direct typed AST
    translation."
-4. At 21:54, `3eb3101a` followed with "Fix docs, reset beads." The
+4. At 21:54, `3eb3101a` followed with documentation and task-tracking cleanup. The
    remote-tracking reflog moved from `5453495e` to this non-descendant, showing
    that the rewritten line was also pushed.
 
