@@ -272,6 +272,27 @@
             :version family-workflows/package-version
             :sha256 "preflight-hash"}}))))
 
+(deftest package-slices-accept-equivalent-profile-selectors
+  (let [root (paths/workspace-root)
+        views (family-workflows/package-views (family-proof))
+        view (get views "pdfcube-preflight")
+        run (fn [requested]
+              (#'family-workflows/run-slice!
+               root views nil
+               {:id :preflight :profile "pdfcube-preflight" :workflows #{}
+                :verify
+                (fn [{:keys [package-fn]}]
+                  (let [selected (package-fn {:profile requested})]
+                    {:source {:version "3.0.8" :revision family-workflows/pinned-revision}
+                     :package (:identity selected)
+                     :consumer (:dependency-proof selected)
+                     :comparison {:matched-lines 1}}))}))]
+    (doseq [selector ["pdfcube-preflight" "targets/pdfcube/profiles/preflight.edn"]]
+      (is (= (:id (:identity view)) (:package-id (run selector)))))
+    (doseq [selector ["pdfcube-io" "targets/pdfcube/profiles/io.edn" nil]]
+      (is (= :pdfcube-family-workflows-failed
+             (:kind (ex-data (caught #(run selector)))))))))
+
 (deftest normalized-family-comparator-detects-perturbation
   (let [oracle
         (Files/createTempFile

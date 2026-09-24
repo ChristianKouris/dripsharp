@@ -291,7 +291,10 @@
                    {:slice id :profile profile}))
         package-fn
         (fn [{requested :profile}]
-          (when-not (= profile requested)
+          (when-not (or (= profile requested)
+                        (and (string? requested)
+                             (paths/regular-file? (paths/resolve-path root requested))
+                             (= profile (:profile (harness/read-profile root requested)))))
             (fail! "Workflow slice requested a different package profile"
                    {:slice id :expected profile :actual requested}))
           view)
