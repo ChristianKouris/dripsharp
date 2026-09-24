@@ -90,6 +90,7 @@ internal static class FontCacheRegression
 {
     internal static void RunAll()
     {
+        RuntimeBoundaryRegression.RunAll();
         foreach (string scenario in new[] { "empty-home", "empty-both", "valid-cache", "valid-home", "missing-cache", "file-home", "nul-home", "spaces-cache" })
         {
             var context = new IsolatedFonts();
@@ -197,4 +198,121 @@ internal static class FontCacheRegression
         }
         finally { Directory.Delete(root, true); }
     }
+}
+
+// These assertions also run in the isolated combined-package consumer. Reflection
+// reaches compatibility internals without adding a public testing/configuration API.
+internal static class RuntimeBoundaryRegression
+{
+    private const BindingFlags Static = BindingFlags.Static | BindingFlags.NonPublic;
+    private const BindingFlags Instance = BindingFlags.Instance | BindingFlags.NonPublic;
+
+    internal static void RunAll()
+    {
+        Assembly io = typeof(DripSharp.PdfCarton.IO.RandomAccessReadBuffer).Assembly;
+        Assembly fonts = typeof(DripSharp.PdfCarton.Fonts.Ttf.TTFParser).Assembly;
+        Type ioCompat = io.GetType("DripSharp.Runtime.JavaCompat", true)!;
+        Type fontCompat = fonts.GetType("DripSharp.PdfCarton.Runtime.Fonts.JavaCompat", true)!;
+        Type fileType = io.GetType("DripSharp.Runtime.JavaFile", true)!;
+        Type[] runtimes = { ioCompat, fontCompat };
+
+        foreach (Type writer in runtimes)
+        foreach (Type reader in runtimes)
+        {
+            foreach (string text in new[] {
+                "file:/C:/Windows/Fonts/font%20name.ttf", "file:/tmp/font%25name.ttf",
+                "file:relative.ttf", "file:///C:", "http:///example",
+                "https://example.test/a/%2e%2e/b", "file://server/share/font.ttf" })
+            {
+                var uri = (Uri)Call(writer, "CreateUri", typeof(string), text)!;
+                Equal(text, Call(reader, "UriToString", typeof(Uri), uri), "URI spelling across assemblies");
+                foreach (string operation in new[] { "UriRawAuthority", "UriRawPath", "UriIsOpaque", "UriUsesSingleSlashFileSyntax" })
+                    Equal(Call(writer, operation, typeof(Uri), uri), Call(reader, operation, typeof(Uri), uri), operation);
+                if (text.StartsWith("file:/C:/", StringComparison.Ordinal) || text.StartsWith("file:/tmp/", StringComparison.Ordinal))
+                {
+                    object roundtrip = Call(reader, "NewJavaFile", typeof(Uri), uri)!;
+                    string path = Uri.UnescapeDataString(text.Substring("file:".Length));
+                    if (OperatingSystem.IsWindows())
+                    {
+                        if (path.Length > 2 && path[2] == ':') path = path.Substring(1);
+                        path = path.Replace('/', '\\');
+                    }
+                    Equal(path, Call(ioCompat, "FileGetPath", fileType, roundtrip), "File URI pathname");
+                }
+                else if (text == "file:relative.ttf" || text.StartsWith("file://server", StringComparison.Ordinal))
+                {
+                    try
+                    {
+                        Call(reader, "NewJavaFile", typeof(Uri), uri);
+                        throw new InvalidOperationException("Invalid Java File URI was accepted: " + text);
+                    }
+                    catch (ArgumentException) { }
+                }
+            }
+
+            // A real host pathname exercises FileToUri, including the drive URI
+            // carrier on Windows. Exact text assertions above also run on macOS.
+            string filename = Path.Combine(Path.GetTempPath(), "font name%#é.ttf");
+            object file = Call(ioCompat, "NewJavaFile", typeof(string), filename)!;
+            var fileUri = (Uri)Call(writer, "FileToUri", fileType, file)!;
+            Equal(Call(writer, "UriToString", typeof(Uri), fileUri),
+                Call(reader, "UriToString", typeof(Uri), fileUri), "FileToUri cross-assembly text");
+            object restored = Call(reader, "NewJavaFile", typeof(Uri), fileUri)!;
+            Equal(filename, Call(ioCompat, "FileGetPath", fileType, restored), "FileToUri roundtrip");
+        }
+
+        VerifyExceptions(io, "DripSharp.Runtime");
+        VerifyExceptions(fonts, "DripSharp.PdfCarton.Runtime.Fonts");
+        VerifyExceptions(typeof(DripSharp.PdfCarton.Xmp.XMPMetadata).Assembly, "DripSharp.PdfCarton.Runtime.Xmp");
+    }
+
+    private static object? Call(Type type, string method, Type argumentType, object argument)
+    {
+        try { return type.GetMethod(method, Static, null, new[] { argumentType }, null)!.Invoke(null, new[] { argument }); }
+        catch (TargetInvocationException error) when (error.InnerException is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.InnerException).Throw();
+            throw;
+        }
+    }
+
+    private static void Equal(object? expected, object? actual, string operation)
+    {
+        if (!Equals(expected, actual))
+            throw new InvalidOperationException($"{operation}: expected <{expected}>, got <{actual}>.");
+    }
+
+    // Test the netstandard2.0 legacy contract directly with trusted state. No
+    // BinaryFormatter or untrusted deserialization is used by these net10 tests.
+#pragma warning disable SYSLIB0050, SYSLIB0051
+    private static void VerifyExceptions(Assembly assembly, string ns)
+    {
+        foreach (string name in new[] { "ArgumentNullException", "ArgumentException", "ArgumentOutOfRangeException", "ObjectDisposedException" })
+        {
+            Type type = assembly.GetType(ns + "." + name, true)!;
+            Equal(true, type.IsDefined(typeof(SerializableAttribute), false), name + " Serializable");
+            Exception original = (Exception)Activator.CreateInstance(type, Instance, null, new object[] { "argument-or-object" }, null)!;
+            if (name == "ArgumentException")
+                original = (Exception)Activator.CreateInstance(type, Instance, null,
+                    new object[] { "message", "parameter", new InvalidOperationException("inner") }, null)!;
+            original.Data["context"] = "retained";
+            var info = new System.Runtime.Serialization.SerializationInfo(type, new System.Runtime.Serialization.FormatterConverter());
+            var context = new System.Runtime.Serialization.StreamingContext(System.Runtime.Serialization.StreamingContextStates.All);
+            original.GetObjectData(info, context);
+            var constructor = type.GetConstructor(Instance, null,
+                new[] { typeof(System.Runtime.Serialization.SerializationInfo), typeof(System.Runtime.Serialization.StreamingContext) }, null)
+                ?? throw new InvalidOperationException("Missing serialization constructor: " + type.FullName);
+            Equal(true, constructor.IsFamily, name + " protected constructor");
+            var restored = (Exception)constructor.Invoke(new object[] { info, context });
+            Equal(original.Message, restored.Message, name + " message");
+            Equal(original.HResult, restored.HResult, name + " HResult");
+            Equal(original.InnerException, restored.InnerException, name + " inner exception");
+            Equal(original.Data["context"], restored.Data["context"], name + " data");
+            if (original is ArgumentException argument)
+                Equal(argument.ParamName, ((ArgumentException)restored).ParamName, name + " parameter");
+            if (original is ObjectDisposedException disposed)
+                Equal(disposed.ObjectName, ((ObjectDisposedException)restored).ObjectName, name + " object name");
+        }
+    }
+#pragma warning restore SYSLIB0050, SYSLIB0051
 }

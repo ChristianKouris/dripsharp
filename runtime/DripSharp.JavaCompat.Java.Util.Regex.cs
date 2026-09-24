@@ -283,7 +283,12 @@ internal static partial class JavaCompat
         public override string ToString() => originalPattern;
     }
 
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Regex, JavaUriText>
+    private sealed class JavaRegexPatternText(string value)
+    {
+        internal string Value { get; } = value;
+    }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Regex, JavaRegexPatternText>
         OriginalRegexPatterns = new();
     internal static string[] StringSplit(string value, string pattern, int limit)
         => RegexSplit(CompileRegex(pattern), value, limit);
@@ -1402,7 +1407,7 @@ internal static partial class JavaCompat
             }
             var options = RegexOptions.CultureInvariant;
             var result = new JavaRegex(pattern, translated, options, effectiveFlags, groupNames, namedGroups);
-            _ = OriginalRegexPatterns.GetValue(result, _ => new JavaUriText(pattern));
+            _ = OriginalRegexPatterns.GetValue(result, _ => new JavaRegexPatternText(pattern));
             return result;
         }
         catch (global::System.ArgumentException error)

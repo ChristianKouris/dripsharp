@@ -292,8 +292,16 @@ namespace DripSharp.Runtime
         }
     }
 
+    [global::System.Serializable]
     internal class ArgumentNullException : global::System.ArgumentNullException
     {
+        protected ArgumentNullException(
+            global::System.Runtime.Serialization.SerializationInfo info,
+            global::System.Runtime.Serialization.StreamingContext context)
+            : base(info, context)
+        {
+        }
+
         internal ArgumentNullException()
         {
         }
@@ -313,8 +321,16 @@ namespace DripSharp.Runtime
         }
     }
 
+    [global::System.Serializable]
     internal class ArgumentException : global::System.ArgumentException
     {
+        protected ArgumentException(
+            global::System.Runtime.Serialization.SerializationInfo info,
+            global::System.Runtime.Serialization.StreamingContext context)
+            : base(info, context)
+        {
+        }
+
         internal ArgumentException()
         {
         }
@@ -348,8 +364,16 @@ namespace DripSharp.Runtime
         }
     }
 
+    [global::System.Serializable]
     internal class ArgumentOutOfRangeException : global::System.ArgumentOutOfRangeException
     {
+        protected ArgumentOutOfRangeException(
+            global::System.Runtime.Serialization.SerializationInfo info,
+            global::System.Runtime.Serialization.StreamingContext context)
+            : base(info, context)
+        {
+        }
+
         internal ArgumentOutOfRangeException()
         {
         }
@@ -369,8 +393,16 @@ namespace DripSharp.Runtime
         }
     }
 
+    [global::System.Serializable]
     internal class ObjectDisposedException : global::System.ObjectDisposedException
     {
+        protected ObjectDisposedException(
+            global::System.Runtime.Serialization.SerializationInfo info,
+            global::System.Runtime.Serialization.StreamingContext context)
+            : base(info, context)
+        {
+        }
+
         internal ObjectDisposedException(string? objectName) : base(objectName)
         {
         }

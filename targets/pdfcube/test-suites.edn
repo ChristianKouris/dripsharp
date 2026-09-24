@@ -80,7 +80,7 @@
     "pdfcube-pdfbox"
     {:source "consumer-tests/ReleaseSmokePdfTests.cs"
      :destination "ReleaseSmokePdfTests.cs"
-     :sha256 "03440b4696c1f497c83bc2c5d30b4ea0b290d2acf59e8511f1e3f6d10489960e"}
+     :sha256 "6ec4a0807732836180a0a00081642bb5aa54e5d7ecf88e30179b60e76c457418"}
     "pdfcube-preflight"
     {:source "consumer-tests/ReleaseSmokePreflightTests.cs"
      :destination "ReleaseSmokePreflightTests.cs"

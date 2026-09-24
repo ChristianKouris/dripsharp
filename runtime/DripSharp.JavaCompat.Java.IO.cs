@@ -29,6 +29,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
 
+#if DRIPSHARP_SHARED_JAVA_FILE
+using JavaUriMetadata = global::DripSharp.Runtime.JavaUriMetadata;
+#endif
+
 namespace DripSharp.Runtime;
 
 // JDK compatibility area: Java.IO
@@ -1491,7 +1495,7 @@ internal static partial class JavaCompat
         if (!path.StartsWith("/", StringComparison.Ordinal)) path = "/" + path;
         if (path.StartsWith("//", StringComparison.Ordinal)) path = "//" + path;
         string original = "file:" + QuoteUriComponent(path, ":@/!$&'()*+,;=");
-        _ = OriginalUriTexts.GetValue(carrier, _ => new JavaUriText(original));
+        _ = JavaUriMetadata.OriginalUriTexts.GetValue(carrier, _ => new JavaUriMetadata.Text(original));
         return carrier;
     }
     internal static bool SetFileReadable(JavaFile file, bool readable, bool ownerOnly) =>

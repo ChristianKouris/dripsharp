@@ -166,6 +166,7 @@ JavaUnmodifiableDictionary	java.util.Collections	pdfcube,pkl,rawhttp,sqltrellis	
 JavaUnmodifiableSet	java.util.Collections	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaUnmodifiableSet
 JavaUnrecoverableKeyException	java.security.UnrecoverableKeyException	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaUnrecoverableKeyException
 JavaUnsafe	sun.misc.Unsafe	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaUnsafe
+JavaUriMetadata	java.net.URI	pdfcube,pkl,rawhttp,sqltrellis	behavior/uri,type-contract/JavaUriMetadata
 JavaUriSyntaxException	java.net.URISyntaxException	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaUriSyntaxException
 JavaUserPrincipal	java.nio.file.attribute.UserPrincipal	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaUserPrincipal
 JavaWatchService	java.nio.file.WatchService	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaWatchService

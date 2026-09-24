@@ -29,9 +29,32 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
 
+#if DRIPSHARP_SHARED_JAVA_FILE
+using JavaUriMetadata = global::DripSharp.Runtime.JavaUriMetadata;
+#endif
+
 namespace DripSharp.Runtime;
 
 // JDK compatibility area: Java.Net
+
+// URI carriers cross the same assembly boundaries as JavaFile. Keep their
+// Java spelling and syntax markers with the shared owner, not each JavaCompat
+// copy. Independent generated modules compile their own internal store.
+#if !DRIPSHARP_SHARED_JAVA_FILE
+internal static class JavaUriMetadata
+{
+    internal sealed class Text(string value)
+    {
+        internal string Value { get; } = value;
+    }
+
+    internal static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Uri, object>
+        SingleSlashFileUris = new();
+    internal static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Uri, Text>
+        OriginalUriTexts = new();
+}
+#endif
+
 
 internal sealed class JavaUriSyntaxException : UriFormatException
 {
@@ -310,15 +333,6 @@ internal static partial class JavaCompat
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
         System.Net.Sockets.Socket, JavaSocketFactory> PendingSocketFactories = new();
     private static readonly System.Net.Http.HttpClient UrlClient = new();
-    private sealed class JavaUriText(string value)
-    {
-        internal string Value { get; } = value;
-    }
-
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Uri, object>
-        SingleSlashFileUris = new();
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Uri, JavaUriText>
-        OriginalUriTexts = new();
     private static void ValidateJavaUriText(string value)
     {
         for (var index = 0; index < value.Length; index++)
@@ -344,20 +358,20 @@ internal static partial class JavaCompat
             // Keep a valid CLR carrier while retaining the Java URI spelling
             // and opaque semantics through the compatibility accessors.
             var opaqueFile = new Uri("file:///" + value["file:".Length..], UriKind.Absolute);
-            _ = OriginalUriTexts.GetValue(opaqueFile, _ => new JavaUriText(value));
+            _ = JavaUriMetadata.OriginalUriTexts.GetValue(opaqueFile, _ => new JavaUriMetadata.Text(value));
             return opaqueFile;
         }
         if (Regex.IsMatch(value, @"(?i)^file:/[^/]"))
         {
             var singleSlash = new Uri("file:///" + value["file:/".Length..], UriKind.Absolute);
-            _ = SingleSlashFileUris.GetValue(singleSlash, _ => new object());
-            _ = OriginalUriTexts.GetValue(singleSlash, _ => new JavaUriText(value));
+            _ = JavaUriMetadata.SingleSlashFileUris.GetValue(singleSlash, _ => new object());
+            _ = JavaUriMetadata.OriginalUriTexts.GetValue(singleSlash, _ => new JavaUriMetadata.Text(value));
             return singleSlash;
         }
         if (Regex.IsMatch(value, @"(?i)^file:///[a-z]:$"))
         {
             var driveOnly = new Uri(value + "/", UriKind.Absolute);
-            _ = OriginalUriTexts.GetValue(driveOnly, _ => new JavaUriText(value));
+            _ = JavaUriMetadata.OriginalUriTexts.GetValue(driveOnly, _ => new JavaUriMetadata.Text(value));
             return driveOnly;
         }
         if (!value.StartsWith("file:", StringComparison.OrdinalIgnoreCase) &&
@@ -372,7 +386,7 @@ internal static partial class JavaCompat
             var carrier = new Uri(
                 value[..(authority + 3)] + "dripsharp.invalid/" + value[(authority + 4)..],
                 UriKind.Absolute);
-            _ = OriginalUriTexts.GetValue(carrier, _ => new JavaUriText(value));
+            _ = JavaUriMetadata.OriginalUriTexts.GetValue(carrier, _ => new JavaUriMetadata.Text(value));
             return carrier;
         }
         if (Regex.IsMatch(value, @"(?i)(?:^|/)%2e(?:%2e)?(?:/|$)"))
@@ -380,7 +394,7 @@ internal static partial class JavaCompat
             var carrier = new Uri(
                 value.Replace("%", "%25", StringComparison.Ordinal),
                 UriKind.RelativeOrAbsolute);
-            _ = OriginalUriTexts.GetValue(carrier, _ => new JavaUriText(value));
+            _ = JavaUriMetadata.OriginalUriTexts.GetValue(carrier, _ => new JavaUriMetadata.Text(value));
             return carrier;
         }
         return new Uri(value, UriKind.RelativeOrAbsolute);
@@ -412,9 +426,9 @@ internal static partial class JavaCompat
 
     internal static Uri NewUri(string value) => CreateUri(value);
     internal static string UriToString(Uri value) =>
-        OriginalUriTexts.TryGetValue(value, out var original)
+        JavaUriMetadata.OriginalUriTexts.TryGetValue(value, out var original)
             ? original.Value
-            : SingleSlashFileUris.TryGetValue(value, out _) && value.IsAbsoluteUri && value.IsFile
+            : JavaUriMetadata.SingleSlashFileUris.TryGetValue(value, out _) && value.IsAbsoluteUri && value.IsFile
             ? "file:" + value.AbsolutePath + value.Query + value.Fragment
             : value.IsAbsoluteUri && value.IsFile &&
               !value.OriginalString.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
@@ -428,7 +442,7 @@ internal static partial class JavaCompat
             : value.OriginalString;
 
     internal static bool UriUsesSingleSlashFileSyntax(Uri value) =>
-        SingleSlashFileUris.TryGetValue(value, out _);
+        JavaUriMetadata.SingleSlashFileUris.TryGetValue(value, out _);
 
     private static bool IsUriUnreserved(char value) =>
         value is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or
@@ -503,7 +517,7 @@ internal static partial class JavaCompat
 
     private static string UriTextBeforeFragment(Uri uri)
     {
-        var text = OriginalUriTexts.TryGetValue(uri, out var original)
+        var text = JavaUriMetadata.OriginalUriTexts.TryGetValue(uri, out var original)
             ? original.Value
             : uri.OriginalString;
         var fragment = text.IndexOf('#');
@@ -561,7 +575,7 @@ internal static partial class JavaCompat
 
     internal static string? UriHost(Uri uri)
     {
-        if (OriginalUriTexts.TryGetValue(uri, out _) && UriRawAuthority(uri) is null)
+        if (JavaUriMetadata.OriginalUriTexts.TryGetValue(uri, out _) && UriRawAuthority(uri) is null)
             return null;
         return uri.IsAbsoluteUri && !string.IsNullOrEmpty(uri.Host) ? uri.Host : null;
     }
@@ -613,7 +627,7 @@ internal static partial class JavaCompat
         // java.net.URI.resolve("") resolves to the base URI's containing
         // directory; System.Uri otherwise preserves the base file itself.
         if (value.OriginalString.Length == 0) value = CreateUri(".");
-        if (OriginalUriTexts.TryGetValue(basis, out var originalBasis) &&
+        if (JavaUriMetadata.OriginalUriTexts.TryGetValue(basis, out var originalBasis) &&
             Regex.IsMatch(originalBasis.Value, @"(?i)^file:///[a-z]:$") &&
             value.OriginalString == ".")
             return new Uri("file:///", UriKind.Absolute);
@@ -634,7 +648,7 @@ internal static partial class JavaCompat
     {
         var resolved = ResolveUri(basis, value);
         if (resolved.IsAbsoluteUri && resolved.IsFile)
-            _ = SingleSlashFileUris.GetValue(resolved, _ => new object());
+            _ = JavaUriMetadata.SingleSlashFileUris.GetValue(resolved, _ => new object());
         return resolved;
     }
     internal static Uri NormalizeUri(Uri uri) => uri;
@@ -657,7 +671,7 @@ internal static partial class JavaCompat
     internal static bool UriIsOpaque(Uri uri)
     {
         if (!uri.IsAbsoluteUri) return false;
-        var original = OriginalUriTexts.TryGetValue(uri, out var preserved)
+        var original = JavaUriMetadata.OriginalUriTexts.TryGetValue(uri, out var preserved)
             ? preserved.Value
             : uri.OriginalString;
         var colon = original.IndexOf(':');

@@ -1220,7 +1220,7 @@ internal static partial class JavaCompat
         var text = value.Substring(start, end - start);
         if (Regex.IsMatch(text, @"\A[+-]?(?:NaN|Infinity)\z")) return text;
         if (!Regex.IsMatch(text, @"\A[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|0[xX](?:[0-9a-fA-F]+(?:\.[0-9a-fA-F]*)?|\.[0-9a-fA-F]+)[pP][+-]?[0-9]+)[fFdD]?\z"))
-            throw new JavaNumberFormatException("Invalid floating-point literal.");
+            throw new JavaNumberFormatException(text.Length == 0 ? "empty String" : $"For input string: \"{text}\"");
         return text.Length > 0 && "fFdD".IndexOf(text[text.Length - 1]) >= 0
             ? text.Substring(0, text.Length - 1) : text;
     }
