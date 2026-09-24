@@ -95,6 +95,24 @@
       (is (= :pdfcube-pdfbox-differential-failed
              (:kind (ex-data error)))))))
 
+(deftest aggregate-package-identity-and-boundary-are-checked-independently
+  (let [identity {:id "DripSharp.PdfCarton" :version "3.0.8-alpha.5" :sha256 "abc"}
+        consumer {:packages ["DripSharp.PdfCarton"]}
+        run (fn [package]
+              (#'pdfbox-differential/run-slice!
+               nil {:identity identity :dependency-proof consumer} nil
+               {:id :low-level :workflows #{}
+                :verify (fn [_] {:package package :consumer consumer})}))]
+    (is (= :low-level (:id (run (assoc identity :boundary :nuget)))))
+    (doseq [key [:id :version :sha256]]
+      (is (re-find #"packed identity"
+                   (ex-message (caught #(run (assoc identity key "changed"
+                                                   :boundary :nuget)))))))
+    (doseq [boundary [nil :generated-project]]
+      (is (re-find #"NuGet boundary"
+                   (ex-message (caught #(run (cond-> identity
+                                              boundary (assoc :boundary boundary))))))))))
+
 (deftest aggregate-comparator-detects-a-deliberate-mismatch
   (let [oracle (trace-file "failure\tinvalid-input\tIOException\n")
         perturbed (trace-file "")

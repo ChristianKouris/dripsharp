@@ -290,9 +290,13 @@
                  :package-fn (fn [_] package-proof)
                  :run-command! run-command!})
         identity (select-keys (:identity package-proof) [:id :version :sha256])]
-    (when-not (= identity (:package summary))
+    (when-not (= identity (select-keys (:package summary) [:id :version :sha256]))
       (fail! "A package workflow did not use the aggregate packed identity"
              {:slice id :expected identity :actual (:package summary)}))
+    (when (and (or (= :low-level id) (contains? (:package summary) :boundary))
+               (not= :nuget (get-in summary [:package :boundary])))
+      (fail! "A package workflow did not use the NuGet boundary"
+             {:slice id :boundary (get-in summary [:package :boundary])}))
     (when-not (= (:dependency-proof package-proof) (:consumer summary))
       (fail! "A package workflow escaped the aggregate isolated consumer"
              {:slice id}))
